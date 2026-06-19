@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Rice Cost Manager">
+  <rect width="512" height="512" rx="112" fill="#16A34A"/>
+  <circle cx="392" cy="126" r="48" fill="#FACC15" opacity="0.92"/>
+  <path d="M128 370c95-9 176-66 222-158" fill="none" stroke="#14532D" stroke-width="28" stroke-linecap="round"/>
+  <path d="M154 352c18-66 60-122 121-158" fill="none" stroke="#FAFAF7" stroke-width="18" stroke-linecap="round"/>
+  <g fill="#FAFAF7">
+    <path d="M238 202c-42-4-83 13-110 45 41 8 84-9 110-45Z"/>
+    <path d="M276 181c-39-16-83-12-119 11 35 20 82 16 119-11Z"/>
+    <path d="M309 166c-30-29-72-42-113-35 25 32 72 47 113 35Z"/>
+    <path d="M320 213c-21 36-24 81-8 120 25-31 29-79 8-120Z"/>
+    <path d="M282 248c-31 28-48 70-43 112 34-23 53-68 43-112Z"/>
+    <path d="M235 281c-38 18-66 53-76 94 39-12 70-50 76-94Z"/>
+  </g>
+  <g fill="#FACC15">
+    <ellipse cx="140" cy="252" rx="12" ry="29" transform="rotate(53 140 252)"/>
+    <ellipse cx="167" cy="222" rx="12" ry="29" transform="rotate(64 167 222)"/>
+    <ellipse cx="205" cy="195" rx="12" ry="29" transform="rotate(76 205 195)"/>
+    <ellipse cx="246" cy="180" rx="12" ry="29" transform="rotate(92 246 180)"/>
+    <ellipse cx="284" cy="178" rx="12" ry="29" transform="rotate(112 284 178)"/>
+  </g>
+</svg>
