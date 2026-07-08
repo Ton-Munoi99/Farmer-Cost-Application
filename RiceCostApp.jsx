@@ -32,6 +32,12 @@ const ADV_CATS = [
   { key:'maintenance', icon:'🔧',    color:'#6EE7B7' },
 ];
 const ALL_CAT_MAP = Object.fromEntries([...COST_CATS, ...ADV_CATS].map(c => [c.key, c]));
+const REVENUE_CATS = [
+  { key:'rice',  icon:'🌾', color:'#22C55E' },
+  { key:'straw', icon:'🌿', color:'#84CC16' },
+  { key:'other', icon:'💼', color:'#38BDF8' },
+];
+const REVENUE_CAT_MAP = Object.fromEntries(REVENUE_CATS.map(c => [c.key, c]));
 
 // ─── Initial data ──────────────────────────────────────────────────────────
 const INIT_FARM = {
@@ -60,6 +66,10 @@ const INIT_REVENUE = {
   yieldPerRai:500, price:14.5, deduction:0,
   straw:{ mode:'bale', balesPerRai:12, pricePerBale:40, lumpsum:0 },
   other:0,
+  entries:[
+    { id:1, date:'2025-01-16', category:'rice',  name:'ขายข้าวเปลือก', amount:145000 },
+    { id:2, date:'2025-01-16', category:'straw', name:'ขายฟางข้าว', amount:9600 },
+  ],
 };
 const INIT_HISTORY = [
   { id:1, name:'นาปี 2566',   area:20, profit:39700,  profitPerRai:1985,  totalCost:110000, totalRevenue:149700, date:'15/11/2566' },
@@ -76,6 +86,29 @@ const SEED_STATE = {
   tweaks: TWEAK_DEFAULTS,
 };
 
+function getLegacyRevenueEntries(revenue) {
+  const area = INIT_FARM.area || 1;
+  const riceRev = area * (revenue?.yieldPerRai || 0) * (revenue?.price || 0) * (1 - (revenue?.deduction || 0) / 100);
+  let strawRev = 0;
+  if (revenue?.straw?.mode === 'bale') strawRev = (revenue.straw.balesPerRai || 0) * area * (revenue.straw.pricePerBale || 0);
+  if (revenue?.straw?.mode === 'lumpsum') strawRev = revenue.straw.lumpsum || 0;
+  const otherRev = revenue?.other || 0;
+  return [
+    riceRev > 0 && { id:1, date:'2025-01-16', category:'rice', name:'ขายข้าวเปลือก', amount:riceRev },
+    strawRev > 0 && { id:2, date:'2025-01-16', category:'straw', name:'ขายฟางข้าว', amount:strawRev },
+    otherRev > 0 && { id:3, date:'2025-01-16', category:'other', name:'รายได้อื่นๆ', amount:otherRev },
+  ].filter(Boolean);
+}
+
+function normalizeRevenue(revenue) {
+  const base = { ...INIT_REVENUE, ...(revenue || {}) };
+  return {
+    ...base,
+    straw: { ...INIT_REVENUE.straw, ...(base.straw || {}) },
+    entries: Array.isArray(base.entries) ? base.entries : getLegacyRevenueEntries(base),
+  };
+}
+
 function loadPersistedState() {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -84,7 +117,7 @@ function loadPersistedState() {
     return {
       farm: parsed?.farm || INIT_FARM,
       costEntries: Array.isArray(parsed?.costEntries) ? parsed.costEntries : INIT_ENTRIES,
-      revenue: parsed?.revenue || INIT_REVENUE,
+      revenue: normalizeRevenue(parsed?.revenue),
       history: Array.isArray(parsed?.history) ? parsed.history : INIT_HISTORY,
       tweaks: parsed?.tweaks || TWEAK_DEFAULTS,
     };
@@ -102,16 +135,62 @@ function savePersistedState(state) {
   }
 }
 
+function excelEscape(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+function exportExcelFile(filename, title, sections) {
+  const sectionHtml = sections.map(section => `
+    <h2>${excelEscape(section.title)}</h2>
+    <table>
+      <thead><tr>${section.headers.map(h => `<th>${excelEscape(h)}</th>`).join('')}</tr></thead>
+      <tbody>${section.rows.map(row => `<tr>${row.map(cell => `<td>${excelEscape(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table>
+  `).join('');
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Sarabun, Arial, sans-serif; }
+    h1 { color: #14532D; }
+    h2 { color: #166534; margin-top: 24px; }
+    table { border-collapse: collapse; margin-bottom: 16px; }
+    th, td { border: 1px solid #C8D5C0; padding: 8px 10px; }
+    th { background: #DCFCE7; font-weight: 700; }
+    td.number { mso-number-format:"0.00"; }
+  </style>
+</head>
+<body>
+  <h1>${excelEscape(title)}</h1>
+  ${sectionHtml}
+</body>
+</html>`;
+  const blob = new Blob(['\ufeff', html], { type:'application/vnd.ms-excel;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.xls') ? filename : `${filename}.xls`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Calculation engine ────────────────────────────────────────────────────
 function calcTotals(farm, entries, revenue) {
   const area = farm.area || 1;
   const totalCost = entries.reduce((s,e) => s + (e.amount||0), 0);
   const costPerRai = totalCost / area;
-  const riceRev = area * (revenue.yieldPerRai||0) * (revenue.price||0) * (1-(revenue.deduction||0)/100);
-  let strawRev = 0;
-  if (revenue.straw.mode==='bale')    strawRev = (revenue.straw.balesPerRai||0)*area*(revenue.straw.pricePerBale||0);
-  if (revenue.straw.mode==='lumpsum') strawRev = revenue.straw.lumpsum||0;
-  const totalRevenue = riceRev + strawRev + (revenue.other||0);
+  const revenueEntries = Array.isArray(revenue.entries) ? revenue.entries : [];
+  const riceRev = revenueEntries.filter(e=>e.category==='rice').reduce((s,e)=>s+(e.amount||0),0);
+  const strawRev = revenueEntries.filter(e=>e.category==='straw').reduce((s,e)=>s+(e.amount||0),0);
+  const otherRev = revenueEntries.filter(e=>e.category==='other').reduce((s,e)=>s+(e.amount||0),0);
+  const totalRevenue = riceRev + strawRev + otherRev;
   const profit = totalRevenue - totalCost;
   const profitPerRai = profit / area;
   const costPerKg = revenue.yieldPerRai > 0 ? costPerRai / revenue.yieldPerRai : 0;
@@ -368,6 +447,31 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
     ...COST_CATS.map(c=>({value:c.key,label:`${c.icon} ${t('cat_'+c.key)}`})),
     ...ADV_CATS.map(c=>({value:c.key,label:`${c.icon} ${t('cat_'+c.key)}`})),
   ];
+  const exportCosts = () => {
+    const rows = sorted.map(e => [
+      toLocalDate(e.date, lang),
+      t('cat_'+e.category),
+      e.name || t('cat_'+e.category),
+      e.amount || 0,
+      ((e.amount || 0) / area).toFixed(2),
+    ]);
+    exportExcelFile('rice-costs.xls', t('costs_export_title'), [
+      {
+        title: t('costs_export_summary'),
+        headers: [t('export_metric'), t('export_value')],
+        rows: [
+          [t('costs_total_lbl'), totalCost],
+          [t('costs_per_rai_lbl'), costPerRai.toFixed(2)],
+          [t('costs_entries'), costEntries.length],
+        ],
+      },
+      {
+        title: t('costs_title'),
+        headers: [t('export_date'), t('export_category'), t('export_name'), t('export_amount'), t('export_per_rai')],
+        rows,
+      },
+    ]);
+  };
 
   return (
     <div>
@@ -393,6 +497,7 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
             <Toggle options={[{value:'date',label:t('costs_by_date')},{value:'category',label:t('costs_by_cat')}]} value={groupBy} onChange={setGroupBy}/>
           </div>
         </div>
+        <Btn onClick={exportCosts} variant="secondary" disabled={!costEntries.length} style={{ marginBottom:12 }}>{t('export_costs')}</Btn>
 
         {groups.length===0 && (
           <div style={{ textAlign:'center', padding:'40px 20px', color:'#9B9585' }}>
@@ -472,77 +577,138 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
 function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
   const T = STRINGS[lang] || STRINGS.th;
   const t = k => T[k] || k;
-  const upd  = (k,v) => setRevenue(p=>({...p,[k]:v}));
-  const updS = (k,v) => setRevenue(p=>({...p,straw:{...p.straw,[k]:v}}));
+  const [showForm, setShowForm] = useState(false);
+  const [groupBy, setGroupBy] = useState('date');
+  const [newEntry, setNewEntry] = useState({ date:todayISO(), category:'rice', name:'', amount:'' });
   const area = farm.area||1;
-  const riceRev = area*(revenue.yieldPerRai||0)*(revenue.price||0)*(1-(revenue.deduction||0)/100);
-  let strawRev = 0;
-  if(revenue.straw.mode==='bale')    strawRev=(revenue.straw.balesPerRai||0)*area*(revenue.straw.pricePerBale||0);
-  if(revenue.straw.mode==='lumpsum') strawRev=revenue.straw.lumpsum||0;
-  const totalRev = riceRev+strawRev+(revenue.other||0);
+  const revenueEntries = Array.isArray(revenue.entries) ? revenue.entries : [];
+  const sorted = [...revenueEntries].sort((a,b)=>b.date.localeCompare(a.date));
+  const totalRev = revenueEntries.reduce((s,e)=>s+(e.amount||0),0);
+  const revPerRai = totalRev / area;
+
+  const addEntry = () => {
+    const num = parseFloat(newEntry.amount);
+    if (!num || num<=0) return;
+    setRevenue(p=>({
+      ...p,
+      entries:[...(Array.isArray(p.entries) ? p.entries : []), { id:Date.now(), ...newEntry, amount:num }],
+    }));
+    setNewEntry(p=>({...p,name:'',amount:''}));
+    setShowForm(false);
+  };
+  const delEntry = id => setRevenue(p=>({
+    ...p,
+    entries:(Array.isArray(p.entries) ? p.entries : []).filter(e=>e.id!==id),
+  }));
+
+  let groups = [];
+  if (groupBy==='date') {
+    const byDate = {};
+    sorted.forEach(e=>{if(!byDate[e.date])byDate[e.date]=[];byDate[e.date].push(e);});
+    groups = Object.entries(byDate).map(([date,entries])=>({key:date,label:toLocalDate(date,lang),entries,total:entries.reduce((s,e)=>s+e.amount,0)}));
+  } else {
+    const byCat = {};
+    sorted.forEach(e=>{
+      const c = REVENUE_CAT_MAP[e.category]||{key:e.category,icon:'💼',color:'#38BDF8'};
+      if(!byCat[e.category]) byCat[e.category]={...c,entries:[]};
+      byCat[e.category].entries.push(e);
+    });
+    groups = Object.values(byCat).map(g=>({key:g.key,label:`${g.icon} ${t('rev_cat_'+g.key)}`,entries:g.entries,total:g.entries.reduce((s,e)=>s+e.amount,0)}));
+  }
+
+  const catOptions = REVENUE_CATS.map(c=>({value:c.key,label:`${c.icon} ${t('rev_cat_'+c.key)}`}));
+
   return (
     <div>
       <div style={{ background:`linear-gradient(145deg,${theme.headerA},${theme.headerB})`, padding:'22px 20px 28px', color:'white' }}>
         <div style={{ fontSize:22, fontWeight:800 }}>{t('rev_title')}</div>
         <div style={{ fontSize:14, opacity:0.75, marginTop:4 }}>{t('rev_sub')}</div>
-        <div style={{ marginTop:14, background:'rgba(255,255,255,0.18)', borderRadius:14, padding:'13px 16px', textAlign:'center' }}>
-          <div style={{ fontSize:11, opacity:0.8 }}>{t('rev_total_lbl')}</div>
-          <div style={{ fontSize:28, fontWeight:800 }}>฿{fmt(totalRev)}</div>
+        <div style={{ marginTop:14, background:'rgba(255,255,255,0.18)', borderRadius:14, padding:'13px 16px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div>
+            <div style={{ fontSize:11, opacity:0.8 }}>{t('rev_total_lbl')}</div>
+            <div style={{ fontSize:26, fontWeight:800 }}>฿{fmt(totalRev)}</div>
+          </div>
+          <div style={{ textAlign:'right' }}>
+            <div style={{ fontSize:11, opacity:0.8 }}>{t('rev_per_rai_lbl')} (÷{area} {t('unit_rai')})</div>
+            <div style={{ fontSize:26, fontWeight:800 }}>฿{fmt(revPerRai)}</div>
+          </div>
         </div>
       </div>
-      <div style={{ padding:16 }}>
-        <Card>
-          <div style={{ fontSize:15,fontWeight:700,color:'#1C1917',marginBottom:14 }}>{t('rev_rice_title')}</div>
-          <InputGroup label={t('rev_yield_lbl')} hint={`${t('unit_rai').replace('ไร่','')} ${area} ${t('unit_rai')} · ${t('unit_kg').replace('กก.','')} ${fmt((revenue.yieldPerRai||0)*area)} ${t('unit_kg')}`}>
-            <NumberInput value={revenue.yieldPerRai} onChange={v=>upd('yieldPerRai',parseFloat(v)||0)} unit={t('unit_kg_rai')}/>
-          </InputGroup>
-          <InputGroup label={t('rev_price_lbl')}>
-            <NumberInput value={revenue.price} onChange={v=>upd('price',parseFloat(v)||0)} unit={t('unit_baht_kg')}/>
-          </InputGroup>
-          <InputGroup label={t('rev_deduct_lbl')}>
-            <NumberInput value={revenue.deduction||0} onChange={v=>upd('deduction',parseFloat(v)||0)} unit={t('unit_pct')} placeholder="0"/>
-          </InputGroup>
-          <div style={{ background:'#F0FDF4',borderRadius:10,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center' }}>
-            <div style={{ fontSize:13,color:'#166534',fontWeight:600 }}>{t('rev_rice_result')}</div>
-            <div style={{ fontSize:17,fontWeight:800,color:'#16A34A' }}>฿{fmt(riceRev)}</div>
+      <div style={{ padding:'14px 16px 0' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+          <div style={{ fontSize:13, color:'#9B9585', fontWeight:600 }}>{revenueEntries.length} {t('rev_entries')}</div>
+          <div style={{ width:172 }}>
+            <Toggle options={[{value:'date',label:t('costs_by_date')},{value:'category',label:t('costs_by_cat')}]} value={groupBy} onChange={setGroupBy}/>
           </div>
-        </Card>
-        <Card>
-          <div style={{ fontSize:15,fontWeight:700,color:'#1C1917',marginBottom:12 }}>{t('rev_straw_title')}</div>
-          <RadioGroup value={revenue.straw.mode} onChange={v=>updS('mode',v)} options={[
-            {value:'none',    label:t('rev_straw_none')},
-            {value:'bale',    label:t('rev_straw_bale')},
-            {value:'lumpsum', label:t('rev_straw_lump')},
-          ]}/>
-          {revenue.straw.mode==='bale' && (
-            <div style={{ marginTop:14 }}>
-              <InputGroup label={t('rev_bales_lbl')}>
-                <NumberInput value={revenue.straw.balesPerRai} onChange={v=>updS('balesPerRai',parseFloat(v)||0)} unit={t('unit_bale_rai')}/>
-              </InputGroup>
-              <InputGroup label={t('rev_bale_price_lbl')}>
-                <NumberInput value={revenue.straw.pricePerBale} onChange={v=>updS('pricePerBale',parseFloat(v)||0)} unit={t('unit_baht_bale')}/>
-              </InputGroup>
+        </div>
+
+        {groups.length===0 && (
+          <div style={{ textAlign:'center', padding:'40px 20px', color:'#9B9585' }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>📈</div>
+            <div style={{ fontSize:15, fontWeight:600 }}>{t('rev_empty_title')}</div>
+            <div style={{ fontSize:13, marginTop:4 }}>{t('rev_empty_sub')}</div>
+          </div>
+        )}
+
+        {groups.map(group=>(
+          <div key={group.key} style={{ marginBottom:14 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:7, padding:'0 2px' }}>
+              <div style={{ fontSize:13, fontWeight:700, color:'#44403C' }}>{group.label}</div>
+              <div style={{ fontSize:13, fontWeight:700, color:'#16A34A' }}>฿{fmt(group.total)}</div>
             </div>
-          )}
-          {revenue.straw.mode==='lumpsum' && (
-            <div style={{ marginTop:14 }}>
-              <InputGroup label={t('rev_lump_lbl')}>
-                <NumberInput value={revenue.straw.lumpsum} onChange={v=>updS('lumpsum',parseFloat(v)||0)} unit={t('unit_baht')}/>
-              </InputGroup>
-            </div>
-          )}
-          {revenue.straw.mode!=='none' && strawRev>0 && (
-            <div style={{ background:'#F0FDF4',borderRadius:10,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10 }}>
-              <div style={{ fontSize:13,color:'#166534',fontWeight:600 }}>{t('rev_straw_result')}</div>
-              <div style={{ fontSize:17,fontWeight:800,color:'#16A34A' }}>฿{fmt(strawRev)}</div>
-            </div>
-          )}
-        </Card>
-        <Card>
-          <div style={{ fontSize:15,fontWeight:700,color:'#1C1917',marginBottom:12 }}>{t('rev_other_title')}</div>
-          <NumberInput value={revenue.other||0} onChange={v=>upd('other',parseFloat(v)||0)} unit={t('unit_baht')} placeholder="0"/>
-        </Card>
-        <Btn onClick={()=>setScreen('summary')}>{t('rev_next')}</Btn>
+            {group.entries.map(entry=>{
+              const cat = REVENUE_CAT_MAP[entry.category]||{icon:'💼',color:'#38BDF8'};
+              return (
+                <div key={entry.id} style={{ background:'white', borderRadius:12, padding:'12px 14px', marginBottom:6, display:'flex', alignItems:'center', gap:10, boxShadow:'0 1px 4px rgba(0,0,0,0.055)' }}>
+                  <div style={{ width:36,height:36,borderRadius:10,flexShrink:0,background:(cat.color||'#38BDF8')+'28',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17 }}>{cat.icon}</div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:14,fontWeight:600,color:'#1C1917',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis' }}>{entry.name || t('rev_cat_'+entry.category)}</div>
+                    <div style={{ fontSize:11, color:'#9B9585' }}>{groupBy==='date'?t('rev_cat_'+entry.category):toLocalDate(entry.date,lang)}</div>
+                  </div>
+                  <div style={{ fontSize:15,fontWeight:800,color:'#16A34A',flexShrink:0 }}>฿{fmt(entry.amount)}</div>
+                  <div onClick={()=>delEntry(entry.id)} style={{ flexShrink:0,width:28,height:28,borderRadius:8,background:'#FEF2F2',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:16,color:'#DC2626',fontWeight:700 }}>×</div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+
+        <Btn onClick={()=>setShowForm(!showForm)} variant={showForm?'ghost':'primary'} style={{ marginBottom:12 }}>
+          {showForm ? t('costs_cancel') : t('rev_add')}
+        </Btn>
+
+        {showForm && (
+          <div style={{ background:'white', borderRadius:18, padding:16, marginBottom:14, boxShadow:'0 4px 20px rgba(0,0,0,0.1)', border:'1.5px solid #BBF7D0' }}>
+            <div style={{ fontSize:15,fontWeight:700,color:'#166534',marginBottom:14 }}>{t('rev_form_title')}</div>
+            <InputGroup label={t('rev_date_lbl')}>
+              <input type="date" value={newEntry.date}
+                onChange={e=>setNewEntry(p=>({...p,date:e.target.value}))}
+                style={{ width:'100%',padding:'12px 14px',fontFamily:'Sarabun,sans-serif',fontSize:16,border:'2px solid #E8E8E0',borderRadius:12,background:'white',color:'#1C1917',outline:'none',appearance:'none',WebkitAppearance:'none' }}
+                onFocus={e=>e.target.style.borderColor='#16A34A'}
+                onBlur={e=>e.target.style.borderColor='#E8E8E0'}
+              />
+            </InputGroup>
+            <InputGroup label={t('rev_cat_lbl')}>
+              <SelectInput value={newEntry.category} onChange={v=>setNewEntry(p=>({...p,category:v}))} options={catOptions}/>
+            </InputGroup>
+            <InputGroup label={t('rev_name_lbl')} hint={t('rev_name_hint')}>
+              <TextInput value={newEntry.name} onChange={v=>setNewEntry(p=>({...p,name:v}))} placeholder={t('rev_name_ph')}/>
+            </InputGroup>
+            <InputGroup label={t('rev_amount_lbl')}>
+              <NumberInput value={newEntry.amount} onChange={v=>setNewEntry(p=>({...p,amount:v}))} unit={t('unit_baht')} placeholder="0"/>
+            </InputGroup>
+            {newEntry.amount && parseFloat(newEntry.amount)>0 && (
+              <div style={{ background:'#F0FDF4',borderRadius:10,padding:'10px 12px',marginBottom:12,fontSize:13,color:'#166534',lineHeight:1.7 }}>
+                ฿{fmt(parseFloat(newEntry.amount))} ÷ {area} {t('costs_divide_suffix')} <strong style={{ fontSize:15 }}>{(parseFloat(newEntry.amount)/area).toFixed(2)} {t('unit_baht_rai')}</strong>
+              </div>
+            )}
+            <Btn onClick={addEntry} disabled={!newEntry.amount||parseFloat(newEntry.amount)<=0}>{t('rev_save')}</Btn>
+          </div>
+        )}
+
+        <div style={{ paddingBottom:28 }}>
+          <Btn onClick={()=>setScreen('summary')} variant="secondary">{t('rev_next')}</Btn>
+        </div>
       </div>
     </div>
   );
@@ -551,7 +717,7 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
 // ═══════════════════════════════════════════════════════
 // SCREEN: SUMMARY
 // ═══════════════════════════════════════════════════════
-function SummaryScreen({ farm, totals, setHistory, setScreen, theme, lang }) {
+function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, setScreen, theme, lang }) {
   const T = STRINGS[lang] || STRINGS.th;
   const t = k => T[k] || k;
   const { totalCost,costPerRai,totalRevenue,profit,profitPerRai,costPerKg,breakeven,riceRev,strawRev } = totals;
@@ -568,6 +734,46 @@ function SummaryScreen({ farm, totals, setHistory, setScreen, theme, lang }) {
     const name = lang==='en' ? `Wet Season ${new Date().getFullYear()}` : `นาปี ${new Date().getFullYear()+543}`;
     setHistory(p=>[{id:Date.now(),name,area,profit,profitPerRai,totalCost,totalRevenue,date:new Date().toLocaleDateString(lang==='en'?'en-GB':'th-TH')},...p]);
     setSaved(true);
+  };
+  const exportSummary = () => {
+    const costRows = [...costEntries].sort((a,b)=>b.date.localeCompare(a.date)).map(e => [
+      toLocalDate(e.date, lang),
+      t('cat_'+e.category),
+      e.name || t('cat_'+e.category),
+      e.amount || 0,
+    ]);
+    const revenueRows = [...revenueEntries].sort((a,b)=>b.date.localeCompare(a.date)).map(e => [
+      toLocalDate(e.date, lang),
+      t('rev_cat_'+e.category),
+      e.name || t('rev_cat_'+e.category),
+      e.amount || 0,
+    ]);
+    exportExcelFile('rice-summary.xls', t('sum_export_title'), [
+      {
+        title: t('sum_title'),
+        headers: [t('export_metric'), t('export_value')],
+        rows: [
+          [t('farm_name'), farm.name],
+          [t('farm_area'), `${farm.area} ${t('unit_rai')}`],
+          [t('sum_total_cost'), totalCost],
+          [t('sum_total_rev'), totalRevenue],
+          [isP ? t('sum_profit_lbl') : t('sum_loss_lbl'), profit],
+          [t('dash_per_rai'), profitPerRai.toFixed(2)],
+          [t('sum_cost_kg'), costPerKg.toFixed(2)],
+          [t('sum_breakeven_card'), breakeven.toFixed(2)],
+        ],
+      },
+      {
+        title: t('costs_title'),
+        headers: [t('export_date'), t('export_category'), t('export_name'), t('export_amount')],
+        rows: costRows,
+      },
+      {
+        title: t('rev_title'),
+        headers: [t('export_date'), t('export_category'), t('export_name'), t('export_amount')],
+        rows: revenueRows,
+      },
+    ]);
   };
 
   return (
@@ -614,6 +820,7 @@ function SummaryScreen({ farm, totals, setHistory, setScreen, theme, lang }) {
         </Card>
       </div>
       <div style={{ padding:'0 16px 28px', display:'flex', flexDirection:'column', gap:10 }}>
+        <Btn onClick={exportSummary} variant="secondary">{t('export_summary')}</Btn>
         {!saved
           ? <Btn onClick={handleSave}>{t('sum_save')}</Btn>
           : <div style={{ textAlign:'center',padding:'14px',background:'#F0FDF4',borderRadius:14,fontSize:15,fontWeight:700,color:'#16A34A' }}>{t('sum_saved')}</div>
@@ -813,7 +1020,7 @@ function App() {
     farm:      <FarmInfoScreen   farm={farm} setFarm={setFarm} setScreen={setScreen} {...shared}/>,
     costs:     <CostInputScreen  costEntries={costEntries} setCostEntries={setCostEntries} farm={farm} setScreen={setScreen} {...shared}/>,
     revenue:   <RevenueScreen    revenue={revenue} setRevenue={setRevenue} farm={farm} setScreen={setScreen} {...shared}/>,
-    summary:   <SummaryScreen    farm={farm} totals={totals} setHistory={setHistory} setScreen={setScreen} {...shared}/>,
+    summary:   <SummaryScreen    farm={farm} costEntries={costEntries} revenueEntries={revenue.entries || []} totals={totals} setHistory={setHistory} setScreen={setScreen} {...shared}/>,
     history:   <HistoryScreen    history={history} {...shared}/>,
   };
 
