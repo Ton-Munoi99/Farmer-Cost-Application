@@ -1,8 +1,8 @@
 // components.jsx — Shared UI library for Rice Cost Manager
-const { useState } = window.React;
+import React, { useState } from 'react';
 
 // ─── Formatter ────────────────────────────────────────────────────────────────
-const fmt = (n, decimals = 0) => {
+export const fmt = (n, decimals = 0) => {
   if (n === undefined || n === null || isNaN(n)) return '–';
   return Number(n).toLocaleString('en-US', {
     minimumFractionDigits: decimals,
@@ -11,7 +11,7 @@ const fmt = (n, decimals = 0) => {
 };
 
 // ─── Donut Chart (SVG) ────────────────────────────────────────────────────────
-function DonutChart({ data = [], size = 148, centerLabel, centerUnit, noDataText }) {
+export function DonutChart({ data = [], size = 148, centerLabel, centerUnit, noDataText }) {
   const total = data.reduce((s, d) => s + (d.value || 0), 0);
   const cx = size / 2, cy = size / 2;
   const r = size * 0.32, sw = size * 0.14;
@@ -62,7 +62,7 @@ function DonutChart({ data = [], size = 148, centerLabel, centerUnit, noDataText
 }
 
 // ─── Bar Chart ────────────────────────────────────────────────────────────────
-function BarChart({ items = [], unitLabel = 'THB/rai' }) {
+export function BarChart({ items = [], unitLabel = 'THB/rai' }) {
   const max = Math.max(...items.map(i => i.value), 1);
   return (
     <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', height: 130 }}>
@@ -88,7 +88,7 @@ function BarChart({ items = [], unitLabel = 'THB/rai' }) {
 }
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
-function StatCard({ label, value, sub, color, bg }) {
+export function StatCard({ label, value, sub, color, bg }) {
   return (
     <div style={{ background: bg || '#F0FDF4', borderRadius: 16, padding: '14px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: '#6B6660', lineHeight: 1.3 }}>{label}</div>
@@ -99,7 +99,7 @@ function StatCard({ label, value, sub, color, bg }) {
 }
 
 // ─── Input Group ──────────────────────────────────────────────────────────────
-function InputGroup({ label, hint, children }) {
+export function InputGroup({ label, hint, children }) {
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ fontSize: 15, fontWeight: 600, color: '#44403C', marginBottom: hint ? 3 : 7 }}>{label}</div>
@@ -110,7 +110,7 @@ function InputGroup({ label, hint, children }) {
 }
 
 // ─── Text Input ───────────────────────────────────────────────────────────────
-function TextInput({ value, onChange, placeholder }) {
+export function TextInput({ value, onChange, placeholder }) {
   return (
     <input value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder}
       style={{ width: '100%', padding: '13px 16px', fontFamily: 'Sarabun,sans-serif', fontSize: 16, border: '2px solid #E8E8E0', borderRadius: 12, background: 'white', color: '#1C1917', outline: 'none', WebkitAppearance: 'none', transition: 'border-color 0.2s' }}
@@ -121,7 +121,7 @@ function TextInput({ value, onChange, placeholder }) {
 }
 
 // ─── Number Input ─────────────────────────────────────────────────────────────
-function NumberInput({ value, onChange, placeholder, unit }) {
+export function NumberInput({ value, onChange, placeholder, unit }) {
   const [focused, setFocused] = useState(false);
   return (
     <div style={{ display: 'flex', border: `2px solid ${focused ? '#16A34A' : '#E8E8E0'}`, borderRadius: 12, overflow: 'hidden', background: 'white', transition: 'border-color 0.2s' }}>
@@ -140,7 +140,7 @@ function NumberInput({ value, onChange, placeholder, unit }) {
 }
 
 // ─── Select Input ─────────────────────────────────────────────────────────────
-function SelectInput({ value, onChange, options }) {
+export function SelectInput({ value, onChange, options }) {
   return (
     <div style={{ position: 'relative' }}>
       <select value={value} onChange={e => onChange(e.target.value)}
@@ -153,7 +153,7 @@ function SelectInput({ value, onChange, options }) {
 }
 
 // ─── Radio Group ──────────────────────────────────────────────────────────────
-function RadioGroup({ options, value, onChange }) {
+export function RadioGroup({ options, value, onChange }) {
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       {options.map(opt => (
@@ -167,7 +167,7 @@ function RadioGroup({ options, value, onChange }) {
 }
 
 // ─── Toggle ───────────────────────────────────────────────────────────────────
-function Toggle({ options, value, onChange }) {
+export function Toggle({ options, value, onChange }) {
   return (
     <div style={{ display: 'flex', background: '#F0F0EA', borderRadius: 10, padding: 3 }}>
       {options.map(opt => (
@@ -181,7 +181,7 @@ function Toggle({ options, value, onChange }) {
 }
 
 // ─── Button ───────────────────────────────────────────────────────────────────
-function Btn({ onClick, children, variant = 'primary', disabled, style: extra = {} }) {
+export function Btn({ onClick, children, variant = 'primary', disabled, style: extra = {} }) {
   const V = {
     primary:   { background: '#16A34A', color: 'white', border: 'none' },
     secondary: { background: '#F0FDF4', color: '#16A34A', border: '2px solid #BBF7D0' },
@@ -198,13 +198,8 @@ function Btn({ onClick, children, variant = 'primary', disabled, style: extra = 
 }
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
-function Card({ children, style: s = {} }) {
+export function Card({ children, style: s = {} }) {
   return (
     <div style={{ background: 'white', borderRadius: 18, padding: 16, marginBottom: 10, boxShadow: '0 2px 10px rgba(0,0,0,0.055)', ...s }}>{children}</div>
   );
 }
-
-Object.assign(window, {
-  fmt, DonutChart, BarChart, StatCard, InputGroup,
-  TextInput, NumberInput, SelectInput, RadioGroup, Toggle, Btn, Card,
-});

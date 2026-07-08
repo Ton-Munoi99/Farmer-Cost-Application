@@ -1,7 +1,9 @@
 // RiceCostApp.jsx — Bilingual Rice Cost Manager (TH / EN)
-const { useState, useMemo, useEffect, useRef } = window.React;
-const { fmt, DonutChart, BarChart, StatCard, InputGroup, TextInput, NumberInput, SelectInput, RadioGroup, Toggle, Btn, Card } = window;
-const { STRINGS, toLocalDate } = window;
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { fmt, DonutChart, BarChart, StatCard, InputGroup, TextInput, NumberInput, SelectInput, RadioGroup, Toggle, Btn, Card } from './components.jsx';
+import { STRINGS, toLocalDate } from './translations.jsx';
+
+const TWEAK_DEFAULTS = window.TWEAK_DEFAULTS || { theme:'green', fontSize:'normal', lang:'th' };
 
 // ─── Theme palette ─────────────────────────────────────────────────────────
 const THEMES = {
@@ -1125,7 +1127,7 @@ function TweaksPanel({ tweaks, setTweak, onClose, theme }) {
 // ═══════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════
-function App() {
+export default function App() {
   const initialState = useMemo(loadPersistedState, []);
   const [screen, setScreen]           = useState('dashboard');
   const [farm, setFarm]               = useState(initialState.farm);
@@ -1294,5 +1296,3 @@ function App() {
     </div>
   );
 }
-
-window.ReactDOM.createRoot(document.getElementById('root')).render(<App/>);

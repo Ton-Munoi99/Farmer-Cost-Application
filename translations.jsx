@@ -3,7 +3,7 @@
 const THAI_MONTHS = ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 const ENG_MONTHS  = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-function toLocalDate(iso, lang) {
+export function toLocalDate(iso, lang) {
   if (!iso) return '';
   const [y,m,d] = iso.split('-').map(Number);
   return lang === 'en'
@@ -11,7 +11,7 @@ function toLocalDate(iso, lang) {
     : `${d} ${THAI_MONTHS[m]} ${y+543}`;
 }
 
-const STRINGS = {
+export const STRINGS = {
   th: {
     // ── Nav ──
     nav_home:'หน้าหลัก', nav_farm:'แปลงนา', nav_costs:'ต้นทุน', nav_revenue:'รายได้', nav_summary:'สรุป',
@@ -294,5 +294,3 @@ const STRINGS = {
     tweak_lang:'Language',
   },
 };
-
-Object.assign(window, { STRINGS, toLocalDate });

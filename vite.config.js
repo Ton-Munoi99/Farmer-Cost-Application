@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 
 const rootDir = process.cwd();
@@ -39,21 +39,16 @@ function copyPwaAssets() {
     closeBundle() {
       copyFileSync(resolve(rootDir, 'manifest.json'), resolve(distDir, 'manifest.json'));
       cpSync(resolve(rootDir, 'icons'), resolve(distDir, 'icons'), { recursive: true });
-      cpSync(resolve(rootDir, 'fonts'), resolve(distDir, 'fonts'), { recursive: true });
 
-      const prodHtml = resolve(distDir, 'index.prod.html');
       const indexHtml = resolve(distDir, 'index.html');
-      if (existsSync(prodHtml)) copyFileSync(prodHtml, indexHtml);
-      if (existsSync(indexHtml)) {
-        const html = readFileSync(indexHtml, 'utf8')
-          .replaceAll('href="/manifest.json"', 'href="manifest.json"')
-          .replaceAll('href="/icons/icon.svg"', 'href="icons/icon.svg"')
-          .replaceAll('href="/icons/icon-192.png"', 'href="icons/icon-192.png"')
-          .replaceAll('href="./assets/manifest.json"', 'href="manifest.json"')
-          .replaceAll('href="./assets/icon.svg"', 'href="icons/icon.svg"')
-          .replaceAll('href="./assets/icon-192.png"', 'href="icons/icon-192.png"');
-        writeFileSync(indexHtml, html);
-      }
+      const html = readFileSync(indexHtml, 'utf8')
+        .replaceAll('href="/manifest.json"', 'href="manifest.json"')
+        .replaceAll('href="/icons/icon.svg"', 'href="icons/icon.svg"')
+        .replaceAll('href="/icons/icon-192.png"', 'href="icons/icon-192.png"')
+        .replaceAll('href="./assets/manifest.json"', 'href="manifest.json"')
+        .replaceAll('href="./assets/icon.svg"', 'href="icons/icon.svg"')
+        .replaceAll('href="./assets/icon-192.png"', 'href="icons/icon-192.png"');
+      writeFileSync(indexHtml, html);
 
       const precacheFiles = listFiles(distDir)
         .filter(file => basename(file) !== 'sw.js');
@@ -106,37 +101,13 @@ self.addEventListener('fetch', event => {
   };
 }
 
-function reactGlobalCompat() {
-  return {
-    name: 'react-global-compat',
-    enforce: 'pre',
-    transform(code, id) {
-      if (id.endsWith('components.jsx')) {
-        return {
-          code: `import React from 'react';\n${code.replaceAll('window.React', 'React')}`,
-          map: null,
-        };
-      }
-
-      if (id.endsWith('RiceCostApp.jsx')) {
-        return {
-          code: `import React from 'react';\nimport { createRoot } from 'react-dom/client';\nconst ReactDOM = { createRoot };\n${code.replaceAll('window.ReactDOM', 'ReactDOM').replaceAll('window.React', 'React')}`,
-          map: null,
-        };
-      }
-
-      return null;
-    },
-  };
-}
-
 export default defineConfig({
   base: './',
-  plugins: [reactGlobalCompat(), react({ jsxRuntime: 'classic' }), copyPwaAssets()],
+  plugins: [react({ jsxRuntime: 'classic' }), copyPwaAssets()],
   build: {
     emptyOutDir: true,
     rollupOptions: {
-      input: resolve(rootDir, 'index.prod.html'),
+      input: resolve(rootDir, 'index.html'),
       output: {
         inlineDynamicImports: true,
         entryFileNames: 'assets/ricecost-app.js',
