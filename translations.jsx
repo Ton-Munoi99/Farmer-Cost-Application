@@ -52,6 +52,8 @@ const STRINGS = {
     // ── Farm ──
     farm_title:'🌾 ข้อมูลแปลงนา', farm_sub:'กรอกข้อมูลพื้นฐานของแปลงนา',
     farm_name:'ชื่อแปลงนา', farm_name_ph:'เช่น นาข้าวแปลง A',
+    farm_season_name:'ชื่อฤดูกาล/รอบการผลิต', farm_season_name_hint:'ใช้แยกรอบนาปี นาปรัง หรือแปลงทดลอง',
+    farm_season_name_ph:'เช่น นาปี 2567/68',
     farm_province:'จังหวัด', farm_province_ph:'เช่น สุพรรณบุรี',
     farm_district:'อำเภอ', farm_district_ph:'เช่น บางปลาม้า',
     farm_season_lbl:'ฤดูกาลข้าว', farm_variety:'พันธุ์ข้าว', farm_method:'วิธีการปลูก',
@@ -67,6 +69,7 @@ const STRINGS = {
     costs_empty_title:'ยังไม่มีรายการต้นทุน', costs_empty_sub:'กดปุ่มด้านล่างเพื่อเพิ่มรายการ',
     costs_add:'+ เพิ่มรายการต้นทุน', costs_cancel:'✕ ยกเลิก',
     costs_form_title:'📝 บันทึกรายจ่าย',
+    costs_edit_title:'✏️ แก้ไขรายจ่าย',
     costs_date_lbl:'วันที่จ่ายเงิน', costs_cat_lbl:'หมวดหมู่',
     costs_name_lbl:'ชื่อรายการ (ไม่บังคับ)', costs_name_hint:'เช่น ปุ๋ยยูเรีย 2 กระสอบ',
     costs_name_ph:'รายละเอียดเพิ่มเติม...',
@@ -81,6 +84,8 @@ const STRINGS = {
     export_metric:'หัวข้อ', export_value:'ค่า',
     export_date:'วันที่', export_category:'หมวดหมู่', export_name:'รายการ',
     export_amount:'จำนวนเงิน', export_per_rai:'บาท/ไร่',
+    edit_short:'แก้',
+    save_changes:'✓ บันทึกการแก้ไข',
 
     // ── Revenue ──
     rev_title:'📈 รายได้จากนาข้าว', rev_sub:'บันทึกรายรับรายวันจากข้าว ฟาง และรายได้อื่นๆ',
@@ -89,6 +94,7 @@ const STRINGS = {
     rev_empty_title:'ยังไม่มีรายการรายได้', rev_empty_sub:'กดปุ่มด้านล่างเพื่อเพิ่มรายรับ',
     rev_add:'+ เพิ่มรายการรายได้',
     rev_form_title:'📝 บันทึกรายรับ',
+    rev_edit_title:'✏️ แก้ไขรายรับ',
     rev_date_lbl:'วันที่รับเงิน', rev_cat_lbl:'ประเภทรายได้',
     rev_cat_rice:'ขายข้าวเปลือก', rev_cat_straw:'ขายฟางข้าว', rev_cat_other:'รายได้อื่นๆ',
     rev_name_lbl:'ชื่อรายการ (ไม่บังคับ)', rev_name_hint:'เช่น ขายข้าวรอบแรก / ขายฟางอัดก้อน',
@@ -119,6 +125,10 @@ const STRINGS = {
     sum_bar_cost:'ต้นทุน', sum_bar_rev:'รายได้', sum_bar_profit:'กำไร', sum_bar_loss:'ขาดทุน',
     sum_save:'💾 บันทึกฤดูกาลนี้', sum_saved:'✅ บันทึกเรียบร้อยแล้ว',
     sum_compare:'📅 เปรียบเทียบกับฤดูก่อน',
+    open_reports:'📊 เปิดรายงานกราฟ',
+    backup_data:'💾 สำรองข้อมูล',
+    import_data:'📥 นำเข้าข้อมูล',
+    start_new_season:'เริ่มฤดูกาลใหม่',
     sum_msg_profit:'รอบนี้คุณมีกำไร', sum_msg_profit2:'บาทต่อไร่ 🎉',
     sum_msg_loss:'ราคาขายข้าวเปลือกต้องไม่ต่ำกว่า', sum_msg_loss2:'บาท/กก. จึงจะไม่ขาดทุน',
 
@@ -128,6 +138,14 @@ const STRINGS = {
     hist_best:'⭐ ฤดูกาลที่ดีที่สุด',
     hist_all:'ประวัติทั้งหมด', hist_chart_title:'กำไร/ไร่ เปรียบเทียบแต่ละฤดู',
     hist_per_rai:'บาท/ไร่', hist_total_suffix:'บาท',
+
+    // ── Reports ──
+    report_title:'📊 รายงานกราฟ',
+    report_sub:'ดูแนวโน้ม ต้นทุน รายได้ และกำไรของรอบนี้',
+    report_kpi:'ตัวชี้วัดหลัก',
+    report_cost_cat:'ต้นทุนตามหมวด',
+    report_rev_cat:'รายได้ตามประเภท',
+    report_daily:'ต้นทุน/รายได้รายวัน',
 
     // ── Tweaks ──
     tweak_theme:'สีธีม', tweak_green:'เขียว', tweak_earth:'ดิน', tweak_blue:'น้ำเงิน',
@@ -175,6 +193,8 @@ const STRINGS = {
     // ── Farm ──
     farm_title:'🌾 Farm Plot Info', farm_sub:'Enter basic information about your plot',
     farm_name:'Plot Name', farm_name_ph:'e.g. North Field A',
+    farm_season_name:'Season / Cycle Name', farm_season_name_hint:'Use this to separate wet season, dry season, or test plots',
+    farm_season_name_ph:'e.g. Wet Season 2024/25',
     farm_province:'Province', farm_province_ph:'e.g. Suphanburi',
     farm_district:'District', farm_district_ph:'e.g. Bang Pla Ma',
     farm_season_lbl:'Rice Season', farm_variety:'Rice Variety', farm_method:'Cultivation Method',
@@ -190,6 +210,7 @@ const STRINGS = {
     costs_empty_title:'No cost entries yet', costs_empty_sub:'Tap below to add your first entry',
     costs_add:'+ Add Cost Entry', costs_cancel:'✕ Cancel',
     costs_form_title:'📝 Record a Payment',
+    costs_edit_title:'✏️ Edit Payment',
     costs_date_lbl:'Date Paid', costs_cat_lbl:'Category',
     costs_name_lbl:'Description (optional)', costs_name_hint:'e.g. Urea fertilizer 2 bags',
     costs_name_ph:'Additional details...',
@@ -204,6 +225,8 @@ const STRINGS = {
     export_metric:'Metric', export_value:'Value',
     export_date:'Date', export_category:'Category', export_name:'Item',
     export_amount:'Amount', export_per_rai:'THB/rai',
+    edit_short:'Edit',
+    save_changes:'✓ Save Changes',
 
     // ── Revenue ──
     rev_title:'📈 Farm Revenue', rev_sub:'Record daily income from rice, straw, and other sources',
@@ -212,6 +235,7 @@ const STRINGS = {
     rev_empty_title:'No revenue entries yet', rev_empty_sub:'Tap below to add your first income entry',
     rev_add:'+ Add Revenue Entry',
     rev_form_title:'📝 Record Income',
+    rev_edit_title:'✏️ Edit Income',
     rev_date_lbl:'Date Received', rev_cat_lbl:'Revenue Type',
     rev_cat_rice:'Paddy Rice Sale', rev_cat_straw:'Straw Sale', rev_cat_other:'Other Revenue',
     rev_name_lbl:'Description (optional)', rev_name_hint:'e.g. First rice sale / straw bales',
@@ -242,6 +266,10 @@ const STRINGS = {
     sum_bar_cost:'Cost', sum_bar_rev:'Revenue', sum_bar_profit:'Profit', sum_bar_loss:'Loss',
     sum_save:'💾 Save This Season', sum_saved:'✅ Season Saved!',
     sum_compare:'📅 Compare with Previous Seasons',
+    open_reports:'📊 Open Charts',
+    backup_data:'💾 Backup Data',
+    import_data:'📥 Import Data',
+    start_new_season:'Start New Season',
     sum_msg_profit:'You made a profit of', sum_msg_profit2:'THB/rai this season 🎉',
     sum_msg_loss:'Selling price must be at least', sum_msg_loss2:'THB/kg to break even.',
 
@@ -251,6 +279,14 @@ const STRINGS = {
     hist_best:'⭐ Best Season',
     hist_all:'All Seasons', hist_chart_title:'Profit/rai by Season',
     hist_per_rai:'THB/rai', hist_total_suffix:'THB',
+
+    // ── Reports ──
+    report_title:'📊 Charts & Reports',
+    report_sub:'Review trends, costs, revenue, and profit for this season',
+    report_kpi:'Key Metrics',
+    report_cost_cat:'Cost by Category',
+    report_rev_cat:'Revenue by Type',
+    report_daily:'Daily Cost / Revenue',
 
     // ── Tweaks ──
     tweak_theme:'Color Theme', tweak_green:'Green', tweak_earth:'Earth', tweak_blue:'Blue',

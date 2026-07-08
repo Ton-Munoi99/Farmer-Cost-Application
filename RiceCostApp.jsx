@@ -1,5 +1,5 @@
 // RiceCostApp.jsx — Bilingual Rice Cost Manager (TH / EN)
-const { useState, useMemo, useEffect } = window.React;
+const { useState, useMemo, useEffect, useRef } = window.React;
 const { fmt, DonutChart, BarChart, StatCard, InputGroup, TextInput, NumberInput, SelectInput, RadioGroup, Toggle, Btn, Card } = window;
 const { STRINGS, toLocalDate } = window;
 
@@ -41,7 +41,7 @@ const REVENUE_CAT_MAP = Object.fromEntries(REVENUE_CATS.map(c => [c.key, c]));
 
 // ─── Initial data ──────────────────────────────────────────────────────────
 const INIT_FARM = {
-  name:'นาข้าวหมู่บ้านท่าช้าง', province:'สุพรรณบุรี', district:'บางปลาม้า',
+  name:'นาข้าวหมู่บ้านท่าช้าง', seasonLabel:'นาปี 2567/68', province:'สุพรรณบุรี', district:'บางปลาม้า',
   season:'wet', variety:'hommali', method:'transplant', area:20, expectedYield:500,
 };
 const INIT_ENTRIES = [
@@ -143,38 +143,83 @@ function excelEscape(value) {
     .replaceAll('"', '&quot;');
 }
 
+const CRC_TABLE = (() => {
+  const table = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  bytes.forEach(b => { c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8); });
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function writeU16(arr, value) { arr.push(value & 255, (value >>> 8) & 255); }
+function writeU32(arr, value) { arr.push(value & 255, (value >>> 8) & 255, (value >>> 16) & 255, (value >>> 24) & 255); }
+
+function createZip(files) {
+  const encoder = new TextEncoder();
+  const out = [];
+  const central = [];
+  let offset = 0;
+  files.forEach(file => {
+    const nameBytes = encoder.encode(file.name);
+    const data = encoder.encode(file.content);
+    const crc = crc32(data);
+    const local = [];
+    writeU32(local, 0x04034b50); writeU16(local, 20); writeU16(local, 0); writeU16(local, 0);
+    writeU16(local, 0); writeU16(local, 0); writeU32(local, crc); writeU32(local, data.length); writeU32(local, data.length);
+    writeU16(local, nameBytes.length); writeU16(local, 0);
+    out.push(...local, ...nameBytes, ...data);
+
+    const cd = [];
+    writeU32(cd, 0x02014b50); writeU16(cd, 20); writeU16(cd, 20); writeU16(cd, 0); writeU16(cd, 0);
+    writeU16(cd, 0); writeU16(cd, 0); writeU32(cd, crc); writeU32(cd, data.length); writeU32(cd, data.length);
+    writeU16(cd, nameBytes.length); writeU16(cd, 0); writeU16(cd, 0); writeU16(cd, 0); writeU16(cd, 0); writeU32(cd, 0); writeU32(cd, offset);
+    central.push(...cd, ...nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  });
+  const centralOffset = out.length;
+  out.push(...central);
+  writeU32(out, 0x06054b50); writeU16(out, 0); writeU16(out, 0); writeU16(out, files.length); writeU16(out, files.length);
+  writeU32(out, central.length); writeU32(out, centralOffset); writeU16(out, 0);
+  return new Uint8Array(out);
+}
+
+function sheetXml(section) {
+  const rows = [section.headers, ...section.rows];
+  const rowXml = rows.map((row, rIdx) => `<row r="${rIdx + 1}">${row.map((cell, cIdx) => {
+    const col = String.fromCharCode(65 + cIdx);
+    const n = typeof cell === 'number' && Number.isFinite(cell);
+    return n
+      ? `<c r="${col}${rIdx + 1}"><v>${cell}</v></c>`
+      : `<c r="${col}${rIdx + 1}" t="inlineStr"><is><t>${excelEscape(cell)}</t></is></c>`;
+  }).join('')}</row>`).join('');
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowXml}</sheetData></worksheet>`;
+}
+
 function exportExcelFile(filename, title, sections) {
-  const sectionHtml = sections.map(section => `
-    <h2>${excelEscape(section.title)}</h2>
-    <table>
-      <thead><tr>${section.headers.map(h => `<th>${excelEscape(h)}</th>`).join('')}</tr></thead>
-      <tbody>${section.rows.map(row => `<tr>${row.map(cell => `<td>${excelEscape(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
-    </table>
-  `).join('');
-  const html = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { font-family: Sarabun, Arial, sans-serif; }
-    h1 { color: #14532D; }
-    h2 { color: #166534; margin-top: 24px; }
-    table { border-collapse: collapse; margin-bottom: 16px; }
-    th, td { border: 1px solid #C8D5C0; padding: 8px 10px; }
-    th { background: #DCFCE7; font-weight: 700; }
-    td.number { mso-number-format:"0.00"; }
-  </style>
-</head>
-<body>
-  <h1>${excelEscape(title)}</h1>
-  ${sectionHtml}
-</body>
-</html>`;
-  const blob = new Blob(['\ufeff', html], { type:'application/vnd.ms-excel;charset=utf-8' });
+  const safeSections = sections.map((section, index) => ({ ...section, sheetName: (section.title || `Sheet${index + 1}`).slice(0, 28) }));
+  const workbookSheets = safeSections.map((section, index) => `<sheet name="${excelEscape(section.sheetName)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join('');
+  const rels = safeSections.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join('');
+  const files = [
+    { name:'[Content_Types].xml', content:`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${safeSections.map((_, i)=>`<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>` },
+    { name:'_rels/.rels', content:`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name:'xl/workbook.xml', content:`<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${workbookSheets}</sheets></workbook>` },
+    { name:'xl/_rels/workbook.xml.rels', content:`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>` },
+    ...safeSections.map((section, index) => ({ name:`xl/worksheets/sheet${index + 1}.xml`, content:sheetXml(section) })),
+  ];
+  const blob = new Blob([createZip(files)], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename.endsWith('.xls') ? filename : `${filename}.xls`;
+  a.download = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -270,7 +315,7 @@ function DashboardScreen({ farm, totals, setScreen, theme, lang }) {
   return (
     <div>
       <div style={{ background:`linear-gradient(145deg,${theme.headerA},${theme.headerB})`, padding:'22px 20px 34px', color:'white' }}>
-        <div style={{ fontSize:12, opacity:0.72, marginBottom:4 }}>🌾 {t('dash_season')} · {t(farm.season)}</div>
+        <div style={{ fontSize:12, opacity:0.72, marginBottom:4 }}>🌾 {farm.seasonLabel || t('dash_season')} · {t(farm.season)}</div>
         <div style={{ fontSize:22, fontWeight:800, lineHeight:1.2 }}>{farm.name}</div>
         <div style={{ fontSize:13, opacity:0.72, marginTop:3 }}>{farm.province} · {farm.area} {t('unit_rai')}</div>
       </div>
@@ -360,6 +405,9 @@ function FarmInfoScreen({ farm, setFarm, setScreen, theme, lang }) {
           <InputGroup label={t('farm_name')}>
             <TextInput value={farm.name} onChange={v=>upd('name',v)} placeholder={t('farm_name_ph')}/>
           </InputGroup>
+          <InputGroup label={t('farm_season_name')} hint={t('farm_season_name_hint')}>
+            <TextInput value={farm.seasonLabel} onChange={v=>upd('seasonLabel',v)} placeholder={t('farm_season_name_ph')}/>
+          </InputGroup>
           <InputGroup label={t('farm_province')}>
             <TextInput value={farm.province} onChange={v=>upd('province',v)} placeholder={t('farm_province_ph')}/>
           </InputGroup>
@@ -414,6 +462,7 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
   const [showForm, setShowForm] = useState(false);
   const [groupBy, setGroupBy]   = useState('date');
   const [newEntry, setNewEntry] = useState({ date:todayISO(), category:'seed', name:'', amount:'' });
+  const [editingId, setEditingId] = useState(null);
   const area = farm.area || 1;
   const totalCost  = costEntries.reduce((s,e)=>s+(e.amount||0),0);
   const costPerRai = totalCost / area;
@@ -421,11 +470,26 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
   const addEntry = () => {
     const num = parseFloat(newEntry.amount);
     if (!num || num<=0) return;
-    setCostEntries(p=>[...p,{id:Date.now(),...newEntry,amount:num}]);
+    if (editingId) {
+      setCostEntries(p=>p.map(e=>e.id===editingId ? {...e,...newEntry,amount:num} : e));
+      setEditingId(null);
+    } else {
+      setCostEntries(p=>[...p,{id:Date.now(),...newEntry,amount:num}]);
+    }
     setNewEntry(p=>({...p,name:'',amount:''}));
     setShowForm(false);
   };
   const delEntry = id => setCostEntries(p=>p.filter(e=>e.id!==id));
+  const editEntry = entry => {
+    setNewEntry({ date:entry.date, category:entry.category, name:entry.name || '', amount:String(entry.amount || '') });
+    setEditingId(entry.id);
+    setShowForm(true);
+  };
+  const cancelForm = () => {
+    setEditingId(null);
+    setNewEntry({ date:todayISO(), category:'seed', name:'', amount:'' });
+    setShowForm(false);
+  };
 
   const sorted = [...costEntries].sort((a,b)=>b.date.localeCompare(a.date));
   let groups = [];
@@ -455,7 +519,7 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
       e.amount || 0,
       ((e.amount || 0) / area).toFixed(2),
     ]);
-    exportExcelFile('rice-costs.xls', t('costs_export_title'), [
+    exportExcelFile('rice-costs.xlsx', t('costs_export_title'), [
       {
         title: t('costs_export_summary'),
         headers: [t('export_metric'), t('export_value')],
@@ -523,6 +587,7 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
                     <div style={{ fontSize:11, color:'#9B9585' }}>{groupBy==='date'?t('cat_'+entry.category):toLocalDate(entry.date,lang)}</div>
                   </div>
                   <div style={{ fontSize:15,fontWeight:800,color:'#F97316',flexShrink:0 }}>฿{fmt(entry.amount)}</div>
+                  <div onClick={()=>editEntry(entry)} style={{ flexShrink:0,width:34,height:28,borderRadius:8,background:'#F0FDF4',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'#16A34A',fontWeight:800 }}>{t('edit_short')}</div>
                   <div onClick={()=>delEntry(entry.id)} style={{ flexShrink:0,width:28,height:28,borderRadius:8,background:'#FEF2F2',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:16,color:'#DC2626',fontWeight:700 }}>×</div>
                 </div>
               );
@@ -530,13 +595,13 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
           </div>
         ))}
 
-        <Btn onClick={()=>setShowForm(!showForm)} variant={showForm?'ghost':'primary'} style={{ marginBottom:12 }}>
+        <Btn onClick={()=>showForm ? cancelForm() : setShowForm(true)} variant={showForm?'ghost':'primary'} style={{ marginBottom:12 }}>
           {showForm ? t('costs_cancel') : t('costs_add')}
         </Btn>
 
         {showForm && (
           <div style={{ background:'white', borderRadius:18, padding:16, marginBottom:14, boxShadow:'0 4px 20px rgba(0,0,0,0.1)', border:'1.5px solid #FED7AA' }}>
-            <div style={{ fontSize:15,fontWeight:700,color:'#92400E',marginBottom:14 }}>{t('costs_form_title')}</div>
+            <div style={{ fontSize:15,fontWeight:700,color:'#92400E',marginBottom:14 }}>{editingId ? t('costs_edit_title') : t('costs_form_title')}</div>
             <InputGroup label={t('costs_date_lbl')}>
               <input type="date" value={newEntry.date}
                 onChange={e=>setNewEntry(p=>({...p,date:e.target.value}))}
@@ -559,7 +624,7 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
                 ฿{fmt(parseFloat(newEntry.amount))} ÷ {area} {t('costs_divide_suffix')} <strong style={{ fontSize:15 }}>{(parseFloat(newEntry.amount)/area).toFixed(2)} {t('unit_baht_rai')}</strong>
               </div>
             )}
-            <Btn onClick={addEntry} disabled={!newEntry.amount||parseFloat(newEntry.amount)<=0}>{t('costs_save')}</Btn>
+            <Btn onClick={addEntry} disabled={!newEntry.amount||parseFloat(newEntry.amount)<=0}>{editingId ? t('save_changes') : t('costs_save')}</Btn>
           </div>
         )}
 
@@ -580,6 +645,7 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
   const [showForm, setShowForm] = useState(false);
   const [groupBy, setGroupBy] = useState('date');
   const [newEntry, setNewEntry] = useState({ date:todayISO(), category:'rice', name:'', amount:'' });
+  const [editingId, setEditingId] = useState(null);
   const area = farm.area||1;
   const revenueEntries = Array.isArray(revenue.entries) ? revenue.entries : [];
   const sorted = [...revenueEntries].sort((a,b)=>b.date.localeCompare(a.date));
@@ -589,10 +655,16 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
   const addEntry = () => {
     const num = parseFloat(newEntry.amount);
     if (!num || num<=0) return;
-    setRevenue(p=>({
-      ...p,
-      entries:[...(Array.isArray(p.entries) ? p.entries : []), { id:Date.now(), ...newEntry, amount:num }],
-    }));
+    setRevenue(p=>{
+      const entries = Array.isArray(p.entries) ? p.entries : [];
+      return {
+        ...p,
+        entries: editingId
+          ? entries.map(e=>e.id===editingId ? {...e,...newEntry,amount:num} : e)
+          : [...entries, { id:Date.now(), ...newEntry, amount:num }],
+      };
+    });
+    setEditingId(null);
     setNewEntry(p=>({...p,name:'',amount:''}));
     setShowForm(false);
   };
@@ -600,6 +672,16 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
     ...p,
     entries:(Array.isArray(p.entries) ? p.entries : []).filter(e=>e.id!==id),
   }));
+  const editEntry = entry => {
+    setNewEntry({ date:entry.date, category:entry.category, name:entry.name || '', amount:String(entry.amount || '') });
+    setEditingId(entry.id);
+    setShowForm(true);
+  };
+  const cancelForm = () => {
+    setEditingId(null);
+    setNewEntry({ date:todayISO(), category:'rice', name:'', amount:'' });
+    setShowForm(false);
+  };
 
   let groups = [];
   if (groupBy==='date') {
@@ -666,6 +748,7 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
                     <div style={{ fontSize:11, color:'#9B9585' }}>{groupBy==='date'?t('rev_cat_'+entry.category):toLocalDate(entry.date,lang)}</div>
                   </div>
                   <div style={{ fontSize:15,fontWeight:800,color:'#16A34A',flexShrink:0 }}>฿{fmt(entry.amount)}</div>
+                  <div onClick={()=>editEntry(entry)} style={{ flexShrink:0,width:34,height:28,borderRadius:8,background:'#F0FDF4',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'#16A34A',fontWeight:800 }}>{t('edit_short')}</div>
                   <div onClick={()=>delEntry(entry.id)} style={{ flexShrink:0,width:28,height:28,borderRadius:8,background:'#FEF2F2',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:16,color:'#DC2626',fontWeight:700 }}>×</div>
                 </div>
               );
@@ -673,13 +756,13 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
           </div>
         ))}
 
-        <Btn onClick={()=>setShowForm(!showForm)} variant={showForm?'ghost':'primary'} style={{ marginBottom:12 }}>
+        <Btn onClick={()=>showForm ? cancelForm() : setShowForm(true)} variant={showForm?'ghost':'primary'} style={{ marginBottom:12 }}>
           {showForm ? t('costs_cancel') : t('rev_add')}
         </Btn>
 
         {showForm && (
           <div style={{ background:'white', borderRadius:18, padding:16, marginBottom:14, boxShadow:'0 4px 20px rgba(0,0,0,0.1)', border:'1.5px solid #BBF7D0' }}>
-            <div style={{ fontSize:15,fontWeight:700,color:'#166534',marginBottom:14 }}>{t('rev_form_title')}</div>
+            <div style={{ fontSize:15,fontWeight:700,color:'#166534',marginBottom:14 }}>{editingId ? t('rev_edit_title') : t('rev_form_title')}</div>
             <InputGroup label={t('rev_date_lbl')}>
               <input type="date" value={newEntry.date}
                 onChange={e=>setNewEntry(p=>({...p,date:e.target.value}))}
@@ -702,7 +785,7 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
                 ฿{fmt(parseFloat(newEntry.amount))} ÷ {area} {t('costs_divide_suffix')} <strong style={{ fontSize:15 }}>{(parseFloat(newEntry.amount)/area).toFixed(2)} {t('unit_baht_rai')}</strong>
               </div>
             )}
-            <Btn onClick={addEntry} disabled={!newEntry.amount||parseFloat(newEntry.amount)<=0}>{t('rev_save')}</Btn>
+            <Btn onClick={addEntry} disabled={!newEntry.amount||parseFloat(newEntry.amount)<=0}>{editingId ? t('save_changes') : t('rev_save')}</Btn>
           </div>
         )}
 
@@ -717,7 +800,7 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
 // ═══════════════════════════════════════════════════════
 // SCREEN: SUMMARY
 // ═══════════════════════════════════════════════════════
-function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, setScreen, theme, lang }) {
+function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, setScreen, onStartNewSeason, onExportBackup, onImportBackup, theme, lang }) {
   const T = STRINGS[lang] || STRINGS.th;
   const t = k => T[k] || k;
   const { totalCost,costPerRai,totalRevenue,profit,profitPerRai,costPerKg,breakeven,riceRev,strawRev } = totals;
@@ -725,6 +808,7 @@ function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, 
   const pColor = isP?'#15803D':'#DC2626';
   const area = farm.area||1;
   const [saved,setSaved] = useState(false);
+  const importInputRef = useRef(null);
 
   const msg = isP
     ? `${t('sum_msg_profit')} ${fmt(profitPerRai)} ${t('sum_msg_profit2')}`
@@ -748,7 +832,7 @@ function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, 
       e.name || t('rev_cat_'+e.category),
       e.amount || 0,
     ]);
-    exportExcelFile('rice-summary.xls', t('sum_export_title'), [
+    exportExcelFile('rice-summary.xlsx', t('sum_export_title'), [
       {
         title: t('sum_title'),
         headers: [t('export_metric'), t('export_value')],
@@ -820,11 +904,26 @@ function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, 
         </Card>
       </div>
       <div style={{ padding:'0 16px 28px', display:'flex', flexDirection:'column', gap:10 }}>
+        <Btn onClick={()=>setScreen('reports')} variant="secondary">{t('open_reports')}</Btn>
         <Btn onClick={exportSummary} variant="secondary">{t('export_summary')}</Btn>
+        <Btn onClick={onExportBackup} variant="secondary">{t('backup_data')}</Btn>
+        <Btn onClick={()=>importInputRef.current?.click()} variant="secondary">{t('import_data')}</Btn>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          style={{ display:'none' }}
+          onChange={e=>{
+            const file = e.target.files?.[0];
+            if (file) onImportBackup(file);
+            e.target.value = '';
+          }}
+        />
         {!saved
           ? <Btn onClick={handleSave}>{t('sum_save')}</Btn>
           : <div style={{ textAlign:'center',padding:'14px',background:'#F0FDF4',borderRadius:14,fontSize:15,fontWeight:700,color:'#16A34A' }}>{t('sum_saved')}</div>
         }
+        <Btn onClick={onStartNewSeason} variant="ghost">{t('start_new_season')}</Btn>
         <Btn onClick={()=>setScreen('history')} variant="secondary">{t('sum_compare')}</Btn>
       </div>
     </div>
@@ -893,6 +992,81 @@ function HistoryScreen({ history, theme, lang }) {
             </div>
           </Card>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// SCREEN: REPORTS
+// ═══════════════════════════════════════════════════════
+function ReportsScreen({ costEntries, revenueEntries, totals, theme, lang }) {
+  const T = STRINGS[lang] || STRINGS.th;
+  const t = k => T[k] || k;
+  const maxCost = Math.max(...costEntries.map(e=>e.amount||0), 1);
+  const costByCat = COST_CATS.map(c => ({
+    label:t('cat_'+c.key),
+    value:costEntries.filter(e=>e.category===c.key).reduce((s,e)=>s+(e.amount||0),0),
+    subValue:costEntries.filter(e=>e.category===c.key).reduce((s,e)=>s+(e.amount||0),0),
+    color:c.color,
+  })).filter(x=>x.value>0).slice(0, 6);
+  const revByCat = REVENUE_CATS.map(c => ({
+    label:t('rev_cat_'+c.key),
+    value:revenueEntries.filter(e=>e.category===c.key).reduce((s,e)=>s+(e.amount||0),0),
+    subValue:revenueEntries.filter(e=>e.category===c.key).reduce((s,e)=>s+(e.amount||0),0),
+    color:c.color,
+  })).filter(x=>x.value>0);
+  const byDate = {};
+  costEntries.forEach(e=>{ byDate[e.date] = byDate[e.date] || { date:e.date, cost:0, revenue:0 }; byDate[e.date].cost += e.amount || 0; });
+  revenueEntries.forEach(e=>{ byDate[e.date] = byDate[e.date] || { date:e.date, cost:0, revenue:0 }; byDate[e.date].revenue += e.amount || 0; });
+  const daily = Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date)).slice(-7);
+  const maxDaily = Math.max(...daily.flatMap(d=>[d.cost,d.revenue]), 1);
+  return (
+    <div>
+      <div style={{ background:`linear-gradient(145deg,${theme.headerA},${theme.headerB})`, padding:'22px 20px 28px', color:'white' }}>
+        <div style={{ fontSize:22, fontWeight:800 }}>{t('report_title')}</div>
+        <div style={{ fontSize:14, opacity:0.75, marginTop:4 }}>{t('report_sub')}</div>
+      </div>
+      <div style={{ padding:16 }}>
+        <Card>
+          <div style={{ fontSize:15,fontWeight:700,color:'#1C1917',marginBottom:14 }}>{t('report_kpi')}</div>
+          <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr',gap:10 }}>
+            <StatCard label={t('sum_total_cost')} value={`฿${fmt(totals.totalCost)}`} sub={t('costs_entries')} color="#F97316" bg="#FFF7ED"/>
+            <StatCard label={t('sum_total_rev')} value={`฿${fmt(totals.totalRevenue)}`} sub={t('rev_entries')} color="#16A34A" bg="#F0FDF4"/>
+            <StatCard label={t('sum_bar_profit')} value={`฿${fmt(totals.profit)}`} sub={t('dash_per_rai')} color={totals.profit>=0?'#16A34A':'#DC2626'} bg={totals.profit>=0?'#F0FDF4':'#FEF2F2'}/>
+            <StatCard label={t('sum_cost_kg')} value={`${totals.costPerKg.toFixed(2)} ${t('unit_baht_kg')}`} sub={t('sum_be_sub')} color="#7C3AED" bg="#FAF5FF"/>
+          </div>
+        </Card>
+        {costByCat.length>0 && (
+          <Card>
+            <div style={{ fontSize:15,fontWeight:700,color:'#1C1917',marginBottom:14 }}>{t('report_cost_cat')}</div>
+            <BarChart unitLabel={t('unit_baht')} items={costByCat}/>
+          </Card>
+        )}
+        {revByCat.length>0 && (
+          <Card>
+            <div style={{ fontSize:15,fontWeight:700,color:'#1C1917',marginBottom:14 }}>{t('report_rev_cat')}</div>
+            <BarChart unitLabel={t('unit_baht')} items={revByCat}/>
+          </Card>
+        )}
+        <Card>
+          <div style={{ fontSize:15,fontWeight:700,color:'#1C1917',marginBottom:14 }}>{t('report_daily')}</div>
+          <div style={{ display:'flex',flexDirection:'column',gap:9 }}>
+            {daily.map(d=>(
+              <div key={d.date}>
+                <div style={{ display:'flex',justifyContent:'space-between',fontSize:12,color:'#6B6660',fontWeight:700,marginBottom:4 }}>
+                  <span>{toLocalDate(d.date, lang)}</span>
+                  <span>{fmt(d.revenue - d.cost)}</span>
+                </div>
+                <div style={{ height:8,background:'#F0F0EA',borderRadius:8,overflow:'hidden',display:'flex' }}>
+                  <div style={{ width:`${(d.cost/maxDaily)*100}%`,background:'#F97316' }}/>
+                  <div style={{ width:`${(d.revenue/maxDaily)*100}%`,background:'#16A34A' }}/>
+                </div>
+              </div>
+            ))}
+            {!daily.length && <div style={{ fontSize:13,color:'#9B9585',textAlign:'center',padding:20 }}>{t('dash_no_data')}</div>}
+          </div>
+        </Card>
       </div>
     </div>
   );
@@ -1013,6 +1187,65 @@ function App() {
     const choice = await installPrompt.userChoice;
     if (choice?.outcome !== 'dismissed') setInstallPrompt(null);
   };
+  const exportBackup = () => {
+    const backup = {
+      app:'Rice Cost Manager',
+      version:1,
+      exportedAt:new Date().toISOString(),
+      farm,
+      costEntries,
+      revenue,
+      history,
+      tweaks,
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type:'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ricecost-backup-${todayISO()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+  const importBackup = file => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || '{}'));
+        setFarm({ ...INIT_FARM, ...(parsed.farm || {}) });
+        setCostEntries(Array.isArray(parsed.costEntries) ? parsed.costEntries : INIT_ENTRIES);
+        setRevenue(normalizeRevenue(parsed.revenue));
+        setHistory(Array.isArray(parsed.history) ? parsed.history : INIT_HISTORY);
+        setTweaks(parsed.tweaks || TWEAK_DEFAULTS);
+        setScreen('dashboard');
+      } catch (err) {
+        window.alert(lang==='en' ? 'Import failed: invalid backup file.' : 'นำเข้าไม่สำเร็จ: ไฟล์สำรองไม่ถูกต้อง');
+      }
+    };
+    reader.readAsText(file);
+  };
+  const startNewSeason = () => {
+    const ok = window.confirm(lang==='en'
+      ? 'Start a new season? Current summary will be saved to history, then cost and revenue entries will be cleared.'
+      : 'เริ่มฤดูกาลใหม่หรือไม่? ระบบจะบันทึกสรุปรอบนี้ไว้ในประวัติ แล้วล้างรายการต้นทุนและรายได้');
+    if (!ok) return;
+    const seasonName = farm.seasonLabel || farm.name || (lang==='en' ? 'Current Season' : 'ฤดูกาลปัจจุบัน');
+    setHistory(p=>[{
+      id:Date.now(),
+      name:seasonName,
+      area:farm.area || 1,
+      profit:totals.profit,
+      profitPerRai:totals.profitPerRai,
+      totalCost:totals.totalCost,
+      totalRevenue:totals.totalRevenue,
+      date:new Date().toLocaleDateString(lang==='en'?'en-GB':'th-TH'),
+    },...p]);
+    setCostEntries([]);
+    setRevenue(p=>({...normalizeRevenue(p), entries:[]}));
+    setFarm(p=>({...p, seasonLabel: lang==='en' ? `Season ${new Date().getFullYear()}` : `ฤดูกาลใหม่ ${new Date().getFullYear()+543}`}));
+    setScreen('farm');
+  };
 
   const shared = { theme, lang };
   const SCREENS = {
@@ -1020,8 +1253,9 @@ function App() {
     farm:      <FarmInfoScreen   farm={farm} setFarm={setFarm} setScreen={setScreen} {...shared}/>,
     costs:     <CostInputScreen  costEntries={costEntries} setCostEntries={setCostEntries} farm={farm} setScreen={setScreen} {...shared}/>,
     revenue:   <RevenueScreen    revenue={revenue} setRevenue={setRevenue} farm={farm} setScreen={setScreen} {...shared}/>,
-    summary:   <SummaryScreen    farm={farm} costEntries={costEntries} revenueEntries={revenue.entries || []} totals={totals} setHistory={setHistory} setScreen={setScreen} {...shared}/>,
+    summary:   <SummaryScreen    farm={farm} costEntries={costEntries} revenueEntries={revenue.entries || []} totals={totals} setHistory={setHistory} setScreen={setScreen} onStartNewSeason={startNewSeason} onExportBackup={exportBackup} onImportBackup={importBackup} {...shared}/>,
     history:   <HistoryScreen    history={history} {...shared}/>,
+    reports:   <ReportsScreen    costEntries={costEntries} revenueEntries={revenue.entries || []} totals={totals} {...shared}/>,
   };
 
   const fz = tweaks.fontSize==='large'?{fontSize:'108%'}:{};
