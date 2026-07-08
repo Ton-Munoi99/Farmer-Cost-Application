@@ -204,12 +204,7 @@ function Card({ children, style: s = {} }) {
   );
 }
 
-// ─── Divider ──────────────────────────────────────────────────────────────────
-function Divider() {
-  return <div style={{ height: 1, background: '#F0F0EA', margin: '12px 0' }} />;
-}
-
 Object.assign(window, {
   fmt, DonutChart, BarChart, StatCard, InputGroup,
-  TextInput, NumberInput, SelectInput, RadioGroup, Toggle, Btn, Card, Divider,
+  TextInput, NumberInput, SelectInput, RadioGroup, Toggle, Btn, Card,
 });
