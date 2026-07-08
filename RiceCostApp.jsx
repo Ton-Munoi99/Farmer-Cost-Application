@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { fmt, DonutChart, BarChart, StatCard, InputGroup, TextInput, NumberInput, SelectInput, RadioGroup, Toggle, Btn, Card } from './components.jsx';
 import { STRINGS, toLocalDate } from './translations.jsx';
+import { exportExcelFile } from './src/excelExport.js';
 
 const TWEAK_DEFAULTS = window.TWEAK_DEFAULTS || { theme:'green', fontSize:'normal', lang:'th' };
 
@@ -137,97 +138,6 @@ function savePersistedState(state) {
   }
 }
 
-function excelEscape(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
-
-const CRC_TABLE = (() => {
-  const table = [];
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-
-function crc32(bytes) {
-  let c = 0xffffffff;
-  bytes.forEach(b => { c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8); });
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-function writeU16(arr, value) { arr.push(value & 255, (value >>> 8) & 255); }
-function writeU32(arr, value) { arr.push(value & 255, (value >>> 8) & 255, (value >>> 16) & 255, (value >>> 24) & 255); }
-
-function createZip(files) {
-  const encoder = new TextEncoder();
-  const out = [];
-  const central = [];
-  let offset = 0;
-  files.forEach(file => {
-    const nameBytes = encoder.encode(file.name);
-    const data = encoder.encode(file.content);
-    const crc = crc32(data);
-    const local = [];
-    writeU32(local, 0x04034b50); writeU16(local, 20); writeU16(local, 0); writeU16(local, 0);
-    writeU16(local, 0); writeU16(local, 0); writeU32(local, crc); writeU32(local, data.length); writeU32(local, data.length);
-    writeU16(local, nameBytes.length); writeU16(local, 0);
-    out.push(...local, ...nameBytes, ...data);
-
-    const cd = [];
-    writeU32(cd, 0x02014b50); writeU16(cd, 20); writeU16(cd, 20); writeU16(cd, 0); writeU16(cd, 0);
-    writeU16(cd, 0); writeU16(cd, 0); writeU32(cd, crc); writeU32(cd, data.length); writeU32(cd, data.length);
-    writeU16(cd, nameBytes.length); writeU16(cd, 0); writeU16(cd, 0); writeU16(cd, 0); writeU16(cd, 0); writeU32(cd, 0); writeU32(cd, offset);
-    central.push(...cd, ...nameBytes);
-    offset += local.length + nameBytes.length + data.length;
-  });
-  const centralOffset = out.length;
-  out.push(...central);
-  writeU32(out, 0x06054b50); writeU16(out, 0); writeU16(out, 0); writeU16(out, files.length); writeU16(out, files.length);
-  writeU32(out, central.length); writeU32(out, centralOffset); writeU16(out, 0);
-  return new Uint8Array(out);
-}
-
-function sheetXml(section) {
-  const rows = [section.headers, ...section.rows];
-  const rowXml = rows.map((row, rIdx) => `<row r="${rIdx + 1}">${row.map((cell, cIdx) => {
-    const col = String.fromCharCode(65 + cIdx);
-    const n = typeof cell === 'number' && Number.isFinite(cell);
-    return n
-      ? `<c r="${col}${rIdx + 1}"><v>${cell}</v></c>`
-      : `<c r="${col}${rIdx + 1}" t="inlineStr"><is><t>${excelEscape(cell)}</t></is></c>`;
-  }).join('')}</row>`).join('');
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowXml}</sheetData></worksheet>`;
-}
-
-function exportExcelFile(filename, title, sections) {
-  const safeSections = sections.map((section, index) => ({ ...section, sheetName: (section.title || `Sheet${index + 1}`).slice(0, 28) }));
-  const workbookSheets = safeSections.map((section, index) => `<sheet name="${excelEscape(section.sheetName)}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join('');
-  const rels = safeSections.map((_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join('');
-  const files = [
-    { name:'[Content_Types].xml', content:`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${safeSections.map((_, i)=>`<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>` },
-    { name:'_rels/.rels', content:`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
-    { name:'xl/workbook.xml', content:`<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${workbookSheets}</sheets></workbook>` },
-    { name:'xl/_rels/workbook.xml.rels', content:`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>` },
-    ...safeSections.map((section, index) => ({ name:`xl/worksheets/sheet${index + 1}.xml`, content:sheetXml(section) })),
-  ];
-  const blob = new Blob([createZip(files)], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 // ─── Calculation engine ────────────────────────────────────────────────────
 function calcTotals(farm, entries, revenue) {
   const area = farm.area || 1;
@@ -252,6 +162,123 @@ const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 };
+
+const sumAmounts = entries => entries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+const newestFirst = entries => [...entries].sort((a, b) => b.date.localeCompare(a.date));
+const blankEntry = category => ({ date:todayISO(), category, name:'', amount:'' });
+const entryForEdit = entry => ({ date:entry.date, category:entry.category, name:entry.name || '', amount:String(entry.amount || '') });
+
+function categoryOptions(categories, labelFor) {
+  return categories.map(c => ({ value:c.key, label:`${c.icon} ${labelFor(c.key)}` }));
+}
+
+function groupEntries(entries, groupBy, categoryMap, fallbackCategory, labelFor, lang) {
+  if (groupBy === 'date') {
+    return Object.entries(entries.reduce((byDate, entry) => {
+      if (!byDate[entry.date]) byDate[entry.date] = [];
+      byDate[entry.date].push(entry);
+      return byDate;
+    }, {})).map(([date, grouped]) => ({
+      key:date,
+      label:toLocalDate(date, lang),
+      entries:grouped,
+      total:sumAmounts(grouped),
+    }));
+  }
+
+  const byCategory = entries.reduce((groups, entry) => {
+    const category = categoryMap[entry.category] || fallbackCategory;
+    if (!groups[entry.category]) groups[entry.category] = { ...category, entries:[] };
+    groups[entry.category].entries.push(entry);
+    return groups;
+  }, {});
+
+  return Object.values(byCategory).map(group => ({
+    key:group.key,
+    label:`${group.icon} ${labelFor(group.key)}`,
+    entries:group.entries,
+    total:sumAmounts(group.entries),
+  }));
+}
+
+function exportEntryRows(entries, labelFor, lang, extraColumns = () => []) {
+  return newestFirst(entries).map(entry => [
+    toLocalDate(entry.date, lang),
+    labelFor(entry.category),
+    entry.name || labelFor(entry.category),
+    entry.amount || 0,
+    ...extraColumns(entry),
+  ]);
+}
+
+function EntryGroups({ groups, groupBy, categoryMap, fallbackCategory, labelFor, amountColor, emptyIcon, emptyTitle, emptySub, editLabel, onEdit, onDelete, lang }) {
+  if (!groups.length) {
+    return (
+      <div style={{ textAlign:'center', padding:'40px 20px', color:'#9B9585' }}>
+        <div style={{ fontSize:40, marginBottom:12 }}>{emptyIcon}</div>
+        <div style={{ fontSize:15, fontWeight:600 }}>{emptyTitle}</div>
+        <div style={{ fontSize:13, marginTop:4 }}>{emptySub}</div>
+      </div>
+    );
+  }
+
+  return groups.map(group => (
+    <div key={group.key} style={{ marginBottom:14 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:7, padding:'0 2px' }}>
+        <div style={{ fontSize:13, fontWeight:700, color:'#44403C' }}>{group.label}</div>
+        <div style={{ fontSize:13, fontWeight:700, color:amountColor }}>฿{fmt(group.total)}</div>
+      </div>
+      {group.entries.map(entry => {
+        const category = categoryMap[entry.category] || fallbackCategory;
+        return (
+          <div key={entry.id} style={{ background:'white', borderRadius:12, padding:'12px 14px', marginBottom:6, display:'flex', alignItems:'center', gap:10, boxShadow:'0 1px 4px rgba(0,0,0,0.055)' }}>
+            <div style={{ width:36,height:36,borderRadius:10,flexShrink:0,background:(category.color || fallbackCategory.color)+'28',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17 }}>{category.icon}</div>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:14,fontWeight:600,color:'#1C1917',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis' }}>{entry.name || labelFor(entry.category)}</div>
+              <div style={{ fontSize:11, color:'#9B9585' }}>{groupBy==='date' ? labelFor(entry.category) : toLocalDate(entry.date, lang)}</div>
+            </div>
+            <div style={{ fontSize:15,fontWeight:800,color:amountColor,flexShrink:0 }}>฿{fmt(entry.amount)}</div>
+            <div onClick={() => onEdit(entry)} style={{ flexShrink:0,width:34,height:28,borderRadius:8,background:'#F0FDF4',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'#16A34A',fontWeight:800 }}>{editLabel}</div>
+            <div onClick={() => onDelete(entry.id)} style={{ flexShrink:0,width:28,height:28,borderRadius:8,background:'#FEF2F2',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:16,color:'#DC2626',fontWeight:700 }}>×</div>
+          </div>
+        );
+      })}
+    </div>
+  ));
+}
+
+function MoneyEntryForm({ entry, setEntry, editing, title, labels, categoryOptions: options, area, accent, previewBg, onSave }) {
+  const amount = parseFloat(entry.amount);
+
+  return (
+    <div style={{ background:'white', borderRadius:18, padding:16, marginBottom:14, boxShadow:'0 4px 20px rgba(0,0,0,0.1)', border:`1.5px solid ${accent.border}` }}>
+      <div style={{ fontSize:15,fontWeight:700,color:accent.dark,marginBottom:14 }}>{editing ? labels.editTitle : title}</div>
+      <InputGroup label={labels.date}>
+        <input type="date" value={entry.date}
+          onChange={e=>setEntry(p=>({...p,date:e.target.value}))}
+          style={{ width:'100%',padding:'12px 14px',fontFamily:'Sarabun,sans-serif',fontSize:16,border:'2px solid #E8E8E0',borderRadius:12,background:'white',color:'#1C1917',outline:'none',appearance:'none',WebkitAppearance:'none' }}
+          onFocus={e=>e.target.style.borderColor=accent.primary}
+          onBlur={e=>e.target.style.borderColor='#E8E8E0'}
+        />
+      </InputGroup>
+      <InputGroup label={labels.category}>
+        <SelectInput value={entry.category} onChange={v=>setEntry(p=>({...p,category:v}))} options={options}/>
+      </InputGroup>
+      <InputGroup label={labels.name} hint={labels.nameHint}>
+        <TextInput value={entry.name} onChange={v=>setEntry(p=>({...p,name:v}))} placeholder={labels.namePlaceholder}/>
+      </InputGroup>
+      <InputGroup label={labels.amount}>
+        <NumberInput value={entry.amount} onChange={v=>setEntry(p=>({...p,amount:v}))} unit={labels.unitBaht} placeholder="0"/>
+      </InputGroup>
+      {amount > 0 && (
+        <div style={{ background:previewBg,borderRadius:10,padding:'10px 12px',marginBottom:12,fontSize:13,color:accent.dark,lineHeight:1.7 }}>
+          ฿{fmt(amount)} ÷ {area} {labels.divideSuffix} <strong style={{ fontSize:15 }}>{(amount/area).toFixed(2)} {labels.unitBahtRai}</strong>
+        </div>
+      )}
+      <Btn onClick={onSave} disabled={!entry.amount || amount <= 0}>{editing ? labels.saveChanges : labels.save}</Btn>
+    </div>
+  );
+}
 
 // ─── Status bar with TH|EN toggle ─────────────────────────────────────────
 function StatusBar({ theme, lang, onToggleLang }) {
@@ -463,10 +490,10 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
   const t = k => T[k] || k;
   const [showForm, setShowForm] = useState(false);
   const [groupBy, setGroupBy]   = useState('date');
-  const [newEntry, setNewEntry] = useState({ date:todayISO(), category:'seed', name:'', amount:'' });
+  const [newEntry, setNewEntry] = useState(blankEntry('seed'));
   const [editingId, setEditingId] = useState(null);
   const area = farm.area || 1;
-  const totalCost  = costEntries.reduce((s,e)=>s+(e.amount||0),0);
+  const totalCost  = sumAmounts(costEntries);
   const costPerRai = totalCost / area;
 
   const addEntry = () => {
@@ -483,45 +510,24 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
   };
   const delEntry = id => setCostEntries(p=>p.filter(e=>e.id!==id));
   const editEntry = entry => {
-    setNewEntry({ date:entry.date, category:entry.category, name:entry.name || '', amount:String(entry.amount || '') });
+    setNewEntry(entryForEdit(entry));
     setEditingId(entry.id);
     setShowForm(true);
   };
   const cancelForm = () => {
     setEditingId(null);
-    setNewEntry({ date:todayISO(), category:'seed', name:'', amount:'' });
+    setNewEntry(blankEntry('seed'));
     setShowForm(false);
   };
 
-  const sorted = [...costEntries].sort((a,b)=>b.date.localeCompare(a.date));
-  let groups = [];
-  if (groupBy==='date') {
-    const byDate = {};
-    sorted.forEach(e=>{if(!byDate[e.date])byDate[e.date]=[];byDate[e.date].push(e);});
-    groups = Object.entries(byDate).map(([date,entries])=>({key:date,label:toLocalDate(date,lang),entries,total:entries.reduce((s,e)=>s+e.amount,0)}));
-  } else {
-    const byCat = {};
-    sorted.forEach(e=>{
-      const c = ALL_CAT_MAP[e.category]||{key:e.category,icon:'📦',color:'#94A3B8'};
-      if(!byCat[e.category]) byCat[e.category]={...c,entries:[]};
-      byCat[e.category].entries.push(e);
-    });
-    groups = Object.values(byCat).map(g=>({key:g.key,label:`${g.icon} ${t('cat_'+g.key)}`,entries:g.entries,total:g.entries.reduce((s,e)=>s+e.amount,0)}));
-  }
-
-  const catOptions = [
-    ...COST_CATS.map(c=>({value:c.key,label:`${c.icon} ${t('cat_'+c.key)}`})),
-    ...ADV_CATS.map(c=>({value:c.key,label:`${c.icon} ${t('cat_'+c.key)}`})),
-  ];
+  const sorted = newestFirst(costEntries);
+  const labelFor = key => t('cat_'+key);
+  const fallbackCategory = { key:'other', icon:'📦', color:'#94A3B8' };
+  const groups = groupEntries(sorted, groupBy, ALL_CAT_MAP, fallbackCategory, labelFor, lang);
+  const catOptions = categoryOptions([...COST_CATS, ...ADV_CATS], labelFor);
   const exportCosts = () => {
-    const rows = sorted.map(e => [
-      toLocalDate(e.date, lang),
-      t('cat_'+e.category),
-      e.name || t('cat_'+e.category),
-      e.amount || 0,
-      ((e.amount || 0) / area).toFixed(2),
-    ]);
-    exportExcelFile('rice-costs.xlsx', t('costs_export_title'), [
+    const rows = exportEntryRows(sorted, labelFor, lang, e => [((e.amount || 0) / area).toFixed(2)]);
+    exportExcelFile('rice-costs.xlsx', [
       {
         title: t('costs_export_summary'),
         headers: [t('export_metric'), t('export_value')],
@@ -565,69 +571,52 @@ function CostInputScreen({ costEntries, setCostEntries, farm, setScreen, theme, 
         </div>
         <Btn onClick={exportCosts} variant="secondary" disabled={!costEntries.length} style={{ marginBottom:12 }}>{t('export_costs')}</Btn>
 
-        {groups.length===0 && (
-          <div style={{ textAlign:'center', padding:'40px 20px', color:'#9B9585' }}>
-            <div style={{ fontSize:40, marginBottom:12 }}>📝</div>
-            <div style={{ fontSize:15, fontWeight:600 }}>{t('costs_empty_title')}</div>
-            <div style={{ fontSize:13, marginTop:4 }}>{t('costs_empty_sub')}</div>
-          </div>
-        )}
-
-        {groups.map(group=>(
-          <div key={group.key} style={{ marginBottom:14 }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:7, padding:'0 2px' }}>
-              <div style={{ fontSize:13, fontWeight:700, color:'#44403C' }}>{group.label}</div>
-              <div style={{ fontSize:13, fontWeight:700, color:'#F97316' }}>฿{fmt(group.total)}</div>
-            </div>
-            {group.entries.map(entry=>{
-              const cat = ALL_CAT_MAP[entry.category]||{icon:'📦',color:'#94A3B8'};
-              return (
-                <div key={entry.id} style={{ background:'white', borderRadius:12, padding:'12px 14px', marginBottom:6, display:'flex', alignItems:'center', gap:10, boxShadow:'0 1px 4px rgba(0,0,0,0.055)' }}>
-                  <div style={{ width:36,height:36,borderRadius:10,flexShrink:0,background:(cat.color||'#94A3B8')+'28',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17 }}>{cat.icon}</div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:14,fontWeight:600,color:'#1C1917',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis' }}>{entry.name || t('cat_'+entry.category)}</div>
-                    <div style={{ fontSize:11, color:'#9B9585' }}>{groupBy==='date'?t('cat_'+entry.category):toLocalDate(entry.date,lang)}</div>
-                  </div>
-                  <div style={{ fontSize:15,fontWeight:800,color:'#F97316',flexShrink:0 }}>฿{fmt(entry.amount)}</div>
-                  <div onClick={()=>editEntry(entry)} style={{ flexShrink:0,width:34,height:28,borderRadius:8,background:'#F0FDF4',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'#16A34A',fontWeight:800 }}>{t('edit_short')}</div>
-                  <div onClick={()=>delEntry(entry.id)} style={{ flexShrink:0,width:28,height:28,borderRadius:8,background:'#FEF2F2',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:16,color:'#DC2626',fontWeight:700 }}>×</div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+        <EntryGroups
+          groups={groups}
+          groupBy={groupBy}
+          categoryMap={ALL_CAT_MAP}
+          fallbackCategory={fallbackCategory}
+          labelFor={labelFor}
+          amountColor="#F97316"
+          emptyIcon="📝"
+          emptyTitle={t('costs_empty_title')}
+          emptySub={t('costs_empty_sub')}
+          editLabel={t('edit_short')}
+          onEdit={editEntry}
+          onDelete={delEntry}
+          lang={lang}
+        />
 
         <Btn onClick={()=>showForm ? cancelForm() : setShowForm(true)} variant={showForm?'ghost':'primary'} style={{ marginBottom:12 }}>
           {showForm ? t('costs_cancel') : t('costs_add')}
         </Btn>
 
         {showForm && (
-          <div style={{ background:'white', borderRadius:18, padding:16, marginBottom:14, boxShadow:'0 4px 20px rgba(0,0,0,0.1)', border:'1.5px solid #FED7AA' }}>
-            <div style={{ fontSize:15,fontWeight:700,color:'#92400E',marginBottom:14 }}>{editingId ? t('costs_edit_title') : t('costs_form_title')}</div>
-            <InputGroup label={t('costs_date_lbl')}>
-              <input type="date" value={newEntry.date}
-                onChange={e=>setNewEntry(p=>({...p,date:e.target.value}))}
-                style={{ width:'100%',padding:'12px 14px',fontFamily:'Sarabun,sans-serif',fontSize:16,border:'2px solid #E8E8E0',borderRadius:12,background:'white',color:'#1C1917',outline:'none',appearance:'none',WebkitAppearance:'none' }}
-                onFocus={e=>e.target.style.borderColor='#F97316'}
-                onBlur={e=>e.target.style.borderColor='#E8E8E0'}
-              />
-            </InputGroup>
-            <InputGroup label={t('costs_cat_lbl')}>
-              <SelectInput value={newEntry.category} onChange={v=>setNewEntry(p=>({...p,category:v}))} options={catOptions}/>
-            </InputGroup>
-            <InputGroup label={t('costs_name_lbl')} hint={t('costs_name_hint')}>
-              <TextInput value={newEntry.name} onChange={v=>setNewEntry(p=>({...p,name:v}))} placeholder={t('costs_name_ph')}/>
-            </InputGroup>
-            <InputGroup label={t('costs_amount_lbl')}>
-              <NumberInput value={newEntry.amount} onChange={v=>setNewEntry(p=>({...p,amount:v}))} unit={t('unit_baht')} placeholder="0"/>
-            </InputGroup>
-            {newEntry.amount && parseFloat(newEntry.amount)>0 && (
-              <div style={{ background:'#FFF7ED',borderRadius:10,padding:'10px 12px',marginBottom:12,fontSize:13,color:'#92400E',lineHeight:1.7 }}>
-                ฿{fmt(parseFloat(newEntry.amount))} ÷ {area} {t('costs_divide_suffix')} <strong style={{ fontSize:15 }}>{(parseFloat(newEntry.amount)/area).toFixed(2)} {t('unit_baht_rai')}</strong>
-              </div>
-            )}
-            <Btn onClick={addEntry} disabled={!newEntry.amount||parseFloat(newEntry.amount)<=0}>{editingId ? t('save_changes') : t('costs_save')}</Btn>
-          </div>
+          <MoneyEntryForm
+            entry={newEntry}
+            setEntry={setNewEntry}
+            editing={Boolean(editingId)}
+            title={t('costs_form_title')}
+            labels={{
+              editTitle:t('costs_edit_title'),
+              date:t('costs_date_lbl'),
+              category:t('costs_cat_lbl'),
+              name:t('costs_name_lbl'),
+              nameHint:t('costs_name_hint'),
+              namePlaceholder:t('costs_name_ph'),
+              amount:t('costs_amount_lbl'),
+              unitBaht:t('unit_baht'),
+              unitBahtRai:t('unit_baht_rai'),
+              divideSuffix:t('costs_divide_suffix'),
+              save:t('costs_save'),
+              saveChanges:t('save_changes'),
+            }}
+            categoryOptions={catOptions}
+            area={area}
+            accent={{ primary:'#F97316', dark:'#92400E', border:'#FED7AA' }}
+            previewBg="#FFF7ED"
+            onSave={addEntry}
+          />
         )}
 
         <div style={{ paddingBottom:28 }}>
@@ -646,12 +635,12 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
   const t = k => T[k] || k;
   const [showForm, setShowForm] = useState(false);
   const [groupBy, setGroupBy] = useState('date');
-  const [newEntry, setNewEntry] = useState({ date:todayISO(), category:'rice', name:'', amount:'' });
+  const [newEntry, setNewEntry] = useState(blankEntry('rice'));
   const [editingId, setEditingId] = useState(null);
   const area = farm.area||1;
   const revenueEntries = Array.isArray(revenue.entries) ? revenue.entries : [];
-  const sorted = [...revenueEntries].sort((a,b)=>b.date.localeCompare(a.date));
-  const totalRev = revenueEntries.reduce((s,e)=>s+(e.amount||0),0);
+  const sorted = newestFirst(revenueEntries);
+  const totalRev = sumAmounts(revenueEntries);
   const revPerRai = totalRev / area;
 
   const addEntry = () => {
@@ -675,32 +664,20 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
     entries:(Array.isArray(p.entries) ? p.entries : []).filter(e=>e.id!==id),
   }));
   const editEntry = entry => {
-    setNewEntry({ date:entry.date, category:entry.category, name:entry.name || '', amount:String(entry.amount || '') });
+    setNewEntry(entryForEdit(entry));
     setEditingId(entry.id);
     setShowForm(true);
   };
   const cancelForm = () => {
     setEditingId(null);
-    setNewEntry({ date:todayISO(), category:'rice', name:'', amount:'' });
+    setNewEntry(blankEntry('rice'));
     setShowForm(false);
   };
 
-  let groups = [];
-  if (groupBy==='date') {
-    const byDate = {};
-    sorted.forEach(e=>{if(!byDate[e.date])byDate[e.date]=[];byDate[e.date].push(e);});
-    groups = Object.entries(byDate).map(([date,entries])=>({key:date,label:toLocalDate(date,lang),entries,total:entries.reduce((s,e)=>s+e.amount,0)}));
-  } else {
-    const byCat = {};
-    sorted.forEach(e=>{
-      const c = REVENUE_CAT_MAP[e.category]||{key:e.category,icon:'💼',color:'#38BDF8'};
-      if(!byCat[e.category]) byCat[e.category]={...c,entries:[]};
-      byCat[e.category].entries.push(e);
-    });
-    groups = Object.values(byCat).map(g=>({key:g.key,label:`${g.icon} ${t('rev_cat_'+g.key)}`,entries:g.entries,total:g.entries.reduce((s,e)=>s+e.amount,0)}));
-  }
-
-  const catOptions = REVENUE_CATS.map(c=>({value:c.key,label:`${c.icon} ${t('rev_cat_'+c.key)}`}));
+  const labelFor = key => t('rev_cat_'+key);
+  const fallbackCategory = { key:'other', icon:'💼', color:'#38BDF8' };
+  const groups = groupEntries(sorted, groupBy, REVENUE_CAT_MAP, fallbackCategory, labelFor, lang);
+  const catOptions = categoryOptions(REVENUE_CATS, labelFor);
 
   return (
     <div>
@@ -726,69 +703,52 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
           </div>
         </div>
 
-        {groups.length===0 && (
-          <div style={{ textAlign:'center', padding:'40px 20px', color:'#9B9585' }}>
-            <div style={{ fontSize:40, marginBottom:12 }}>📈</div>
-            <div style={{ fontSize:15, fontWeight:600 }}>{t('rev_empty_title')}</div>
-            <div style={{ fontSize:13, marginTop:4 }}>{t('rev_empty_sub')}</div>
-          </div>
-        )}
-
-        {groups.map(group=>(
-          <div key={group.key} style={{ marginBottom:14 }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:7, padding:'0 2px' }}>
-              <div style={{ fontSize:13, fontWeight:700, color:'#44403C' }}>{group.label}</div>
-              <div style={{ fontSize:13, fontWeight:700, color:'#16A34A' }}>฿{fmt(group.total)}</div>
-            </div>
-            {group.entries.map(entry=>{
-              const cat = REVENUE_CAT_MAP[entry.category]||{icon:'💼',color:'#38BDF8'};
-              return (
-                <div key={entry.id} style={{ background:'white', borderRadius:12, padding:'12px 14px', marginBottom:6, display:'flex', alignItems:'center', gap:10, boxShadow:'0 1px 4px rgba(0,0,0,0.055)' }}>
-                  <div style={{ width:36,height:36,borderRadius:10,flexShrink:0,background:(cat.color||'#38BDF8')+'28',display:'flex',alignItems:'center',justifyContent:'center',fontSize:17 }}>{cat.icon}</div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:14,fontWeight:600,color:'#1C1917',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis' }}>{entry.name || t('rev_cat_'+entry.category)}</div>
-                    <div style={{ fontSize:11, color:'#9B9585' }}>{groupBy==='date'?t('rev_cat_'+entry.category):toLocalDate(entry.date,lang)}</div>
-                  </div>
-                  <div style={{ fontSize:15,fontWeight:800,color:'#16A34A',flexShrink:0 }}>฿{fmt(entry.amount)}</div>
-                  <div onClick={()=>editEntry(entry)} style={{ flexShrink:0,width:34,height:28,borderRadius:8,background:'#F0FDF4',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:11,color:'#16A34A',fontWeight:800 }}>{t('edit_short')}</div>
-                  <div onClick={()=>delEntry(entry.id)} style={{ flexShrink:0,width:28,height:28,borderRadius:8,background:'#FEF2F2',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',fontSize:16,color:'#DC2626',fontWeight:700 }}>×</div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+        <EntryGroups
+          groups={groups}
+          groupBy={groupBy}
+          categoryMap={REVENUE_CAT_MAP}
+          fallbackCategory={fallbackCategory}
+          labelFor={labelFor}
+          amountColor="#16A34A"
+          emptyIcon="📈"
+          emptyTitle={t('rev_empty_title')}
+          emptySub={t('rev_empty_sub')}
+          editLabel={t('edit_short')}
+          onEdit={editEntry}
+          onDelete={delEntry}
+          lang={lang}
+        />
 
         <Btn onClick={()=>showForm ? cancelForm() : setShowForm(true)} variant={showForm?'ghost':'primary'} style={{ marginBottom:12 }}>
           {showForm ? t('costs_cancel') : t('rev_add')}
         </Btn>
 
         {showForm && (
-          <div style={{ background:'white', borderRadius:18, padding:16, marginBottom:14, boxShadow:'0 4px 20px rgba(0,0,0,0.1)', border:'1.5px solid #BBF7D0' }}>
-            <div style={{ fontSize:15,fontWeight:700,color:'#166534',marginBottom:14 }}>{editingId ? t('rev_edit_title') : t('rev_form_title')}</div>
-            <InputGroup label={t('rev_date_lbl')}>
-              <input type="date" value={newEntry.date}
-                onChange={e=>setNewEntry(p=>({...p,date:e.target.value}))}
-                style={{ width:'100%',padding:'12px 14px',fontFamily:'Sarabun,sans-serif',fontSize:16,border:'2px solid #E8E8E0',borderRadius:12,background:'white',color:'#1C1917',outline:'none',appearance:'none',WebkitAppearance:'none' }}
-                onFocus={e=>e.target.style.borderColor='#16A34A'}
-                onBlur={e=>e.target.style.borderColor='#E8E8E0'}
-              />
-            </InputGroup>
-            <InputGroup label={t('rev_cat_lbl')}>
-              <SelectInput value={newEntry.category} onChange={v=>setNewEntry(p=>({...p,category:v}))} options={catOptions}/>
-            </InputGroup>
-            <InputGroup label={t('rev_name_lbl')} hint={t('rev_name_hint')}>
-              <TextInput value={newEntry.name} onChange={v=>setNewEntry(p=>({...p,name:v}))} placeholder={t('rev_name_ph')}/>
-            </InputGroup>
-            <InputGroup label={t('rev_amount_lbl')}>
-              <NumberInput value={newEntry.amount} onChange={v=>setNewEntry(p=>({...p,amount:v}))} unit={t('unit_baht')} placeholder="0"/>
-            </InputGroup>
-            {newEntry.amount && parseFloat(newEntry.amount)>0 && (
-              <div style={{ background:'#F0FDF4',borderRadius:10,padding:'10px 12px',marginBottom:12,fontSize:13,color:'#166534',lineHeight:1.7 }}>
-                ฿{fmt(parseFloat(newEntry.amount))} ÷ {area} {t('costs_divide_suffix')} <strong style={{ fontSize:15 }}>{(parseFloat(newEntry.amount)/area).toFixed(2)} {t('unit_baht_rai')}</strong>
-              </div>
-            )}
-            <Btn onClick={addEntry} disabled={!newEntry.amount||parseFloat(newEntry.amount)<=0}>{editingId ? t('save_changes') : t('rev_save')}</Btn>
-          </div>
+          <MoneyEntryForm
+            entry={newEntry}
+            setEntry={setNewEntry}
+            editing={Boolean(editingId)}
+            title={t('rev_form_title')}
+            labels={{
+              editTitle:t('rev_edit_title'),
+              date:t('rev_date_lbl'),
+              category:t('rev_cat_lbl'),
+              name:t('rev_name_lbl'),
+              nameHint:t('rev_name_hint'),
+              namePlaceholder:t('rev_name_ph'),
+              amount:t('rev_amount_lbl'),
+              unitBaht:t('unit_baht'),
+              unitBahtRai:t('unit_baht_rai'),
+              divideSuffix:t('costs_divide_suffix'),
+              save:t('rev_save'),
+              saveChanges:t('save_changes'),
+            }}
+            categoryOptions={catOptions}
+            area={area}
+            accent={{ primary:'#16A34A', dark:'#166534', border:'#BBF7D0' }}
+            previewBg="#F0FDF4"
+            onSave={addEntry}
+          />
         )}
 
         <div style={{ paddingBottom:28 }}>
@@ -822,19 +782,9 @@ function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, 
     setSaved(true);
   };
   const exportSummary = () => {
-    const costRows = [...costEntries].sort((a,b)=>b.date.localeCompare(a.date)).map(e => [
-      toLocalDate(e.date, lang),
-      t('cat_'+e.category),
-      e.name || t('cat_'+e.category),
-      e.amount || 0,
-    ]);
-    const revenueRows = [...revenueEntries].sort((a,b)=>b.date.localeCompare(a.date)).map(e => [
-      toLocalDate(e.date, lang),
-      t('rev_cat_'+e.category),
-      e.name || t('rev_cat_'+e.category),
-      e.amount || 0,
-    ]);
-    exportExcelFile('rice-summary.xlsx', t('sum_export_title'), [
+    const costRows = exportEntryRows(costEntries, key => t('cat_'+key), lang);
+    const revenueRows = exportEntryRows(revenueEntries, key => t('rev_cat_'+key), lang);
+    exportExcelFile('rice-summary.xlsx', [
       {
         title: t('sum_title'),
         headers: [t('export_metric'), t('export_value')],
