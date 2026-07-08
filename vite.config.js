@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { createHash } from 'node:crypto';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 
@@ -13,6 +14,23 @@ function listFiles(dir) {
     if (stat.isDirectory()) return listFiles(fullPath);
     return [fullPath];
   });
+}
+
+function createBuildHash(files) {
+  const hash = createHash('sha256');
+  files
+    .map(file => ({
+      path: `./${relative(distDir, file).replaceAll('\\', '/')}`,
+      fullPath: file,
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .forEach(file => {
+      hash.update(file.path);
+      hash.update('\0');
+      hash.update(readFileSync(file.fullPath));
+      hash.update('\0');
+    });
+  return hash.digest('hex').slice(0, 12);
 }
 
 function copyPwaAssets() {
@@ -37,11 +55,13 @@ function copyPwaAssets() {
         writeFileSync(indexHtml, html);
       }
 
-      const files = listFiles(distDir)
-        .filter(file => basename(file) !== 'sw.js')
+      const precacheFiles = listFiles(distDir)
+        .filter(file => basename(file) !== 'sw.js');
+      const buildHash = createBuildHash(precacheFiles);
+      const files = precacheFiles
         .map(file => `./${relative(distDir, file).replaceAll('\\', '/')}`);
 
-      writeFileSync(resolve(distDir, 'sw.js'), `const CACHE_VERSION = 'ricecost-prod-v2';
+      writeFileSync(resolve(distDir, 'sw.js'), `const CACHE_VERSION = 'ricecost-prod-${buildHash}';
 const APP_CACHE = CACHE_VERSION + '-app';
 const RUNTIME_CACHE = CACHE_VERSION + '-runtime';
 const PRECACHE_ASSETS = ${JSON.stringify(files, null, 2)};
