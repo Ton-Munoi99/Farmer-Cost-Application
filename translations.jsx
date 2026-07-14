@@ -51,6 +51,8 @@ export const STRINGS = {
     dash_margin:'อัตรากำไร', dash_top_cost:'ต้นทุนสูงสุด',
     backup_reminder_title:'ถึงเวลาสำรองข้อมูล', backup_reminder_due:'สำรองครั้งล่าสุดเกิน 30 วันแล้ว',
     backup_never:'ยังไม่เคยสำรองข้อมูลในเครื่องนี้', backup_now:'สำรองตอนนี้',
+    sample_empty_title:'ฤดูนี้ยังไม่มีรายการ', sample_empty_sub:'โหลดข้อมูลตัวอย่างเพื่อทดลองใช้งานได้',
+    sample_restore:'โหลดข้อมูลตัวอย่าง',
 
     // ── Farm ──
     farm_title:'🌾 ข้อมูลแปลงนา', farm_sub:'กรอกข้อมูลพื้นฐานของแปลงนา',
@@ -193,6 +195,8 @@ export const STRINGS = {
     dash_margin:'Profit margin', dash_top_cost:'Largest cost',
     backup_reminder_title:'Time to back up', backup_reminder_due:'Your last backup was over 30 days ago',
     backup_never:'No backup has been made on this device', backup_now:'Back up now',
+    sample_empty_title:'No entries in this season', sample_empty_sub:'Load sample data to explore the app',
+    sample_restore:'Load sample data',
 
     // ── Farm ──
     farm_title:'🌾 Farm Plot Info', farm_sub:'Enter basic information about your plot',

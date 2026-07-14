@@ -363,7 +363,7 @@ function BottomNav({ screen, setScreen, theme, lang }) {
 // ═══════════════════════════════════════════════════════
 // SCREEN: DASHBOARD
 // ═══════════════════════════════════════════════════════
-function DashboardScreen({ farm, totals, setScreen, lastBackupAt, onExportBackup, theme, lang }) {
+function DashboardScreen({ farm, totals, hasEntries, setScreen, lastBackupAt, onExportBackup, onRestoreSample, theme, lang }) {
   const T = STRINGS[lang] || STRINGS.th;
   const t = k => T[k] || k;
   const { totalCost, totalRevenue, profit, profitPerRai, profitMargin, costPerKg, breakeven, averageRicePrice, topCost, chartData } = totals;
@@ -434,6 +434,19 @@ function DashboardScreen({ farm, totals, setScreen, lastBackupAt, onExportBackup
               <div style={{ fontSize:12,color:'#475569',marginTop:2 }}>{lastBackupAt ? t('backup_reminder_due') : t('backup_never')}</div>
             </div>
             <button onClick={onExportBackup} style={{ border:'none',borderRadius:9,background:'#2563EB',color:'white',fontFamily:'Sarabun,sans-serif',fontWeight:700,padding:'9px 11px',cursor:'pointer',flexShrink:0 }}>{t('backup_now')}</button>
+          </Card>
+        </div>
+      )}
+
+      {!hasEntries && (
+        <div style={{ padding:'12px 16px 0' }}>
+          <Card style={{ background:'#FFFBEB',border:'1.5px solid #FDE68A',display:'flex',alignItems:'center',gap:12 }}>
+            <div style={{ fontSize:24 }}>🌾</div>
+            <div style={{ flex:1,minWidth:0 }}>
+              <div style={{ fontSize:14,fontWeight:800,color:'#78350F' }}>{t('sample_empty_title')}</div>
+              <div style={{ fontSize:12,color:'#78716C',marginTop:2 }}>{t('sample_empty_sub')}</div>
+            </div>
+            <button onClick={onRestoreSample} style={{ border:'none',borderRadius:9,background:'#D97706',color:'white',fontFamily:'Sarabun,sans-serif',fontWeight:700,padding:'9px 11px',cursor:'pointer',flexShrink:0 }}>{t('sample_restore')}</button>
           </Card>
         </div>
       )}
@@ -1282,10 +1295,19 @@ export default function App() {
     setRevenue(normalizeRevenue(selected.revenue));
     setScreen('dashboard');
   };
+  const restoreSampleData = () => {
+    const ok = window.confirm(lang==='en'
+      ? 'Load sample farm, cost, and revenue entries into this empty season?'
+      : 'โหลดข้อมูลแปลงนา ต้นทุน และรายได้ตัวอย่างลงในฤดูว่างนี้หรือไม่?');
+    if (!ok) return;
+    setFarm({ ...INIT_FARM });
+    setCostEntries(INIT_ENTRIES.map(entry=>({ ...entry })));
+    setRevenue({ ...INIT_REVENUE, straw:{ ...INIT_REVENUE.straw }, entries:INIT_REVENUE.entries.map(entry=>({ ...entry })) });
+  };
 
   const shared = { theme, lang };
   const SCREENS = {
-    dashboard: <DashboardScreen  farm={farm} totals={totals} setScreen={setScreen} lastBackupAt={lastBackupAt} onExportBackup={exportBackup} {...shared}/>,
+    dashboard: <DashboardScreen  farm={farm} totals={totals} hasEntries={costEntries.length>0 || (revenue.entries || []).length>0} setScreen={setScreen} lastBackupAt={lastBackupAt} onExportBackup={exportBackup} onRestoreSample={restoreSampleData} {...shared}/>,
     farm:      <FarmInfoScreen   farm={farm} setFarm={setFarm} setScreen={setScreen} {...shared}/>,
     costs:     <CostInputScreen  costEntries={costEntries} setCostEntries={setCostEntries} farm={farm} setScreen={setScreen} {...shared}/>,
     revenue:   <RevenueScreen    revenue={revenue} setRevenue={setRevenue} farm={farm} setScreen={setScreen} {...shared}/>,
