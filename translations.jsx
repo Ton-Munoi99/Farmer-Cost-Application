@@ -48,6 +48,9 @@ export const STRINGS = {
     dash_link_cost:'บันทึกต้นทุน', dash_link_rev:'บันทึกรายได้',
     dash_link_farm:'ข้อมูลแปลงนา', dash_link_pl:'ดูสรุป P&L',
     dash_rai_unit:'บาท/ไร่',
+    dash_margin:'อัตรากำไร', dash_top_cost:'ต้นทุนสูงสุด',
+    backup_reminder_title:'ถึงเวลาสำรองข้อมูล', backup_reminder_due:'สำรองครั้งล่าสุดเกิน 30 วันแล้ว',
+    backup_never:'ยังไม่เคยสำรองข้อมูลในเครื่องนี้', backup_now:'สำรองตอนนี้',
 
     // ── Farm ──
     farm_title:'🌾 ข้อมูลแปลงนา', farm_sub:'กรอกข้อมูลพื้นฐานของแปลงนา',
@@ -135,7 +138,7 @@ export const STRINGS = {
     hist_seasons_suffix:'ฤดูกาล ที่บันทึกไว้',
     hist_best:'⭐ ฤดูกาลที่ดีที่สุด',
     hist_all:'ประวัติทั้งหมด', hist_chart_title:'กำไร/ไร่ เปรียบเทียบแต่ละฤดู',
-    hist_per_rai:'บาท/ไร่', hist_total_suffix:'บาท',
+    hist_per_rai:'บาท/ไร่', hist_total_suffix:'บาท', hist_open:'เปิดฤดูนี้',
 
     // ── Reports ──
     report_title:'📊 รายงานกราฟ',
@@ -187,6 +190,9 @@ export const STRINGS = {
     dash_link_cost:'Record Costs', dash_link_rev:'Record Revenue',
     dash_link_farm:'Farm Info', dash_link_pl:'View P&L',
     dash_rai_unit:'THB/rai',
+    dash_margin:'Profit margin', dash_top_cost:'Largest cost',
+    backup_reminder_title:'Time to back up', backup_reminder_due:'Your last backup was over 30 days ago',
+    backup_never:'No backup has been made on this device', backup_now:'Back up now',
 
     // ── Farm ──
     farm_title:'🌾 Farm Plot Info', farm_sub:'Enter basic information about your plot',
@@ -274,7 +280,7 @@ export const STRINGS = {
     hist_seasons_suffix:'season(s) recorded',
     hist_best:'⭐ Best Season',
     hist_all:'All Seasons', hist_chart_title:'Profit/rai by Season',
-    hist_per_rai:'THB/rai', hist_total_suffix:'THB',
+    hist_per_rai:'THB/rai', hist_total_suffix:'THB', hist_open:'Open this season',
 
     // ── Reports ──
     report_title:'📊 Charts & Reports',

@@ -11,10 +11,11 @@ Live app: https://farmer-cost-application.netlify.app
 - Cost and revenue entries by date/category
 - Edit/delete entries
 - Season summary and history
-- Start new season workflow
+- Multiple editable seasons with safe season switching
 - Charts/report screen
 - Export `.xlsx` reports
 - Backup/import `.json` data for moving between devices
+- Monthly backup reminder with last-backup date
 - Thai/English UI toggle
 
 ## Development

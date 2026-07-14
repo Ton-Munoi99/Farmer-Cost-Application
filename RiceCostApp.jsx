@@ -86,6 +86,9 @@ const SEED_STATE = {
   costEntries: INIT_ENTRIES,
   revenue: INIT_REVENUE,
   history: INIT_HISTORY,
+  archivedSeasons: [],
+  activeSeasonId: 'current-season',
+  lastBackupAt: null,
   tweaks: TWEAK_DEFAULTS,
 };
 
@@ -122,6 +125,9 @@ function loadPersistedState() {
       costEntries: Array.isArray(parsed?.costEntries) ? parsed.costEntries : INIT_ENTRIES,
       revenue: normalizeRevenue(parsed?.revenue),
       history: Array.isArray(parsed?.history) ? parsed.history : INIT_HISTORY,
+      archivedSeasons: Array.isArray(parsed?.archivedSeasons) ? parsed.archivedSeasons : [],
+      activeSeasonId: parsed?.activeSeasonId || 'current-season',
+      lastBackupAt: parsed?.lastBackupAt || null,
       tweaks: parsed?.tweaks || TWEAK_DEFAULTS,
     };
   } catch (err) {
@@ -141,6 +147,7 @@ function savePersistedState(state) {
 // ─── Calculation engine ────────────────────────────────────────────────────
 function calcTotals(farm, entries, revenue) {
   const area = farm.area || 1;
+  const yieldPerRai = farm.expectedYield || revenue.yieldPerRai || 0;
   const totalCost = entries.reduce((s,e) => s + (e.amount||0), 0);
   const costPerRai = totalCost / area;
   const revenueEntries = Array.isArray(revenue.entries) ? revenue.entries : [];
@@ -150,12 +157,39 @@ function calcTotals(farm, entries, revenue) {
   const totalRevenue = riceRev + strawRev + otherRev;
   const profit = totalRevenue - totalCost;
   const profitPerRai = profit / area;
-  const costPerKg = revenue.yieldPerRai > 0 ? costPerRai / revenue.yieldPerRai : 0;
-  const chartData = COST_CATS.map(c => ({
+  const costPerKg = yieldPerRai > 0 ? costPerRai / yieldPerRai : 0;
+  const chartData = [...COST_CATS, ...ADV_CATS].map(c => ({
     key: c.key, color: c.color,
     value: entries.filter(e=>e.category===c.key).reduce((s,e)=>s+(e.amount||0),0),
   })).filter(d=>d.value>0);
-  return { totalCost, costPerRai, riceRev, strawRev, totalRevenue, profit, profitPerRai, costPerKg, breakeven:costPerKg, chartData };
+  const topCost = chartData.reduce((top, item) => !top || item.value > top.value ? item : top, null);
+  const profitMargin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : null;
+  const averageRicePrice = yieldPerRai > 0 && riceRev > 0 ? riceRev / (area * yieldPerRai) : 0;
+  return { totalCost, costPerRai, riceRev, strawRev, totalRevenue, profit, profitPerRai, profitMargin, costPerKg, breakeven:costPerKg, averageRicePrice, topCost, chartData };
+}
+
+function seasonSnapshot(id, farm, costEntries, revenue) {
+  return {
+    id,
+    farm: { ...farm },
+    costEntries: costEntries.map(entry => ({ ...entry })),
+    revenue: { ...normalizeRevenue(revenue), entries:(revenue.entries || []).map(entry => ({ ...entry })) },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function historyRecord(id, farm, totals, lang) {
+  return {
+    id:`history-${id}`,
+    seasonId:id,
+    name:farm.seasonLabel || farm.name || (lang==='en' ? 'Current Season' : 'ฤดูกาลปัจจุบัน'),
+    area:farm.area || 1,
+    profit:totals.profit,
+    profitPerRai:totals.profitPerRai,
+    totalCost:totals.totalCost,
+    totalRevenue:totals.totalRevenue,
+    date:new Date().toLocaleDateString(lang==='en'?'en-GB':'th-TH'),
+  };
 }
 
 const todayISO = () => {
@@ -329,10 +363,10 @@ function BottomNav({ screen, setScreen, theme, lang }) {
 // ═══════════════════════════════════════════════════════
 // SCREEN: DASHBOARD
 // ═══════════════════════════════════════════════════════
-function DashboardScreen({ farm, totals, setScreen, theme, lang }) {
+function DashboardScreen({ farm, totals, setScreen, lastBackupAt, onExportBackup, theme, lang }) {
   const T = STRINGS[lang] || STRINGS.th;
   const t = k => T[k] || k;
-  const { totalCost, totalRevenue, profit, profitPerRai, costPerKg, breakeven, chartData } = totals;
+  const { totalCost, totalRevenue, profit, profitPerRai, profitMargin, costPerKg, breakeven, averageRicePrice, topCost, chartData } = totals;
   const isP = profit>=0;
   const pColor = isP?'#15803D':'#DC2626';
   const pBg    = isP?'#F0FDF4':'#FEF2F2';
@@ -361,7 +395,7 @@ function DashboardScreen({ farm, totals, setScreen, theme, lang }) {
               {[
                 { l:t('dash_per_rai'),      v:`${fmt(profitPerRai)} ${t('unit_baht')}`, c:pColor },
                 { l:t('dash_cost_per_kg'),  v:`${costPerKg.toFixed(2)} ${t('unit_baht')}`, c:'#F97316' },
-                { l:t('dash_sell_price'),   v:`${INIT_REVENUE.price} ${t('unit_baht_kg')}`, c:'#44403C' },
+                { l:t('dash_sell_price'),   v:averageRicePrice ? `${averageRicePrice.toFixed(2)} ${t('unit_baht_kg')}` : t('dash_no_data'), c:'#44403C' },
               ].map((x,i)=>(
                 <div key={i}><div style={{fontSize:11,color:'#9B9585'}}>{x.l}</div><div style={{fontSize:14,fontWeight:700,color:x.c}}>{x.v}</div></div>
               ))}
@@ -377,6 +411,32 @@ function DashboardScreen({ farm, totals, setScreen, theme, lang }) {
         <StatCard label={t('dash_cost_kg')}      value={`${costPerKg.toFixed(2)} ${t('unit_baht')}`} sub={t('dash_cost_kg_sub')}  color="#9333EA" bg="#FAF5FF"/>
         <StatCard label={t('dash_breakeven')}    value={`${breakeven.toFixed(2)} ${t('unit_baht_kg')}`} sub={t('dash_breakeven_sub')} color="#D97706" bg="#FFFBEB"/>
       </div>
+
+      <div style={{ padding:'12px 16px 0' }}>
+        <Card style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+          <div>
+            <div style={{ fontSize:12,color:'#9B9585',fontWeight:600 }}>{t('dash_margin')}</div>
+            <div style={{ fontSize:20,fontWeight:800,color:profitMargin===null?'#9B9585':profitMargin>=0?'#15803D':'#DC2626',marginTop:2 }}>{profitMargin===null ? t('dash_no_data') : `${profitMargin.toFixed(1)}%`}</div>
+          </div>
+          <div>
+            <div style={{ fontSize:12,color:'#9B9585',fontWeight:600 }}>{t('dash_top_cost')}</div>
+            <div style={{ fontSize:15,fontWeight:800,color:'#1C1917',marginTop:3 }}>{topCost ? `${t('cat_'+topCost.key)} · ฿${fmt(topCost.value)}` : t('dash_no_data')}</div>
+          </div>
+        </Card>
+      </div>
+
+      {(!lastBackupAt || Date.now() - new Date(lastBackupAt).getTime() >= 30*24*60*60*1000) && (
+        <div style={{ padding:'12px 16px 0' }}>
+          <Card style={{ background:'#EFF6FF',border:'1.5px solid #BFDBFE',display:'flex',alignItems:'center',gap:12 }}>
+            <div style={{ fontSize:24 }}>💾</div>
+            <div style={{ flex:1,minWidth:0 }}>
+              <div style={{ fontSize:14,fontWeight:800,color:'#1E3A8A' }}>{t('backup_reminder_title')}</div>
+              <div style={{ fontSize:12,color:'#475569',marginTop:2 }}>{lastBackupAt ? t('backup_reminder_due') : t('backup_never')}</div>
+            </div>
+            <button onClick={onExportBackup} style={{ border:'none',borderRadius:9,background:'#2563EB',color:'white',fontFamily:'Sarabun,sans-serif',fontWeight:700,padding:'9px 11px',cursor:'pointer',flexShrink:0 }}>{t('backup_now')}</button>
+          </Card>
+        </div>
+      )}
 
       {/* Donut chart */}
       <div style={{ padding:'12px 16px 0' }}>
@@ -762,7 +822,7 @@ function RevenueScreen({ revenue, setRevenue, farm, setScreen, theme, lang }) {
 // ═══════════════════════════════════════════════════════
 // SCREEN: SUMMARY
 // ═══════════════════════════════════════════════════════
-function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, setScreen, onStartNewSeason, onExportBackup, onImportBackup, theme, lang }) {
+function SummaryScreen({ farm, costEntries, revenueEntries, totals, onSaveSeason, setScreen, onStartNewSeason, onExportBackup, onImportBackup, lastBackupAt, theme, lang }) {
   const T = STRINGS[lang] || STRINGS.th;
   const t = k => T[k] || k;
   const { totalCost,costPerRai,totalRevenue,profit,profitPerRai,costPerKg,breakeven,riceRev,strawRev } = totals;
@@ -777,8 +837,7 @@ function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, 
     : `${t('sum_msg_loss')} ${breakeven.toFixed(2)} ${t('sum_msg_loss2')}`;
 
   const handleSave = () => {
-    const name = lang==='en' ? `Wet Season ${new Date().getFullYear()}` : `นาปี ${new Date().getFullYear()+543}`;
-    setHistory(p=>[{id:Date.now(),name,area,profit,profitPerRai,totalCost,totalRevenue,date:new Date().toLocaleDateString(lang==='en'?'en-GB':'th-TH')},...p]);
+    onSaveSeason();
     setSaved(true);
   };
   const exportSummary = () => {
@@ -858,7 +917,7 @@ function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, 
       <div style={{ padding:'0 16px 28px', display:'flex', flexDirection:'column', gap:10 }}>
         <Btn onClick={()=>setScreen('reports')} variant="secondary">{t('open_reports')}</Btn>
         <Btn onClick={exportSummary} variant="secondary">{t('export_summary')}</Btn>
-        <Btn onClick={onExportBackup} variant="secondary">{t('backup_data')}</Btn>
+        <Btn onClick={onExportBackup} variant="secondary">{t('backup_data')}{lastBackupAt ? ` · ${new Date(lastBackupAt).toLocaleDateString(lang==='en'?'en-GB':'th-TH')}` : ''}</Btn>
         <Btn onClick={()=>importInputRef.current?.click()} variant="secondary">{t('import_data')}</Btn>
         <input
           ref={importInputRef}
@@ -885,7 +944,7 @@ function SummaryScreen({ farm, costEntries, revenueEntries, totals, setHistory, 
 // ═══════════════════════════════════════════════════════
 // SCREEN: HISTORY
 // ═══════════════════════════════════════════════════════
-function HistoryScreen({ history, theme, lang }) {
+function HistoryScreen({ history, archivedSeasons, activeSeasonId, onOpenSeason, theme, lang }) {
   const T = STRINGS[lang] || STRINGS.th;
   const t = k => T[k] || k;
   const best = history.length ? history.reduce((b,h)=>h.profitPerRai>b.profitPerRai?h:b,history[0]) : null;
@@ -907,6 +966,7 @@ function HistoryScreen({ history, theme, lang }) {
         <div style={{ fontSize:12,color:'#9B9585',fontWeight:700,marginBottom:8,letterSpacing:0.5 }}>{t('hist_all')}</div>
         {history.map(h=>{
           const isP=h.profitPerRai>=0;
+          const canOpen = h.seasonId && h.seasonId !== activeSeasonId && archivedSeasons.some(season=>season.id===h.seasonId);
           return (
             <Card key={h.id} style={{ marginBottom:8 }}>
               <div style={{ display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8 }}>
@@ -916,6 +976,7 @@ function HistoryScreen({ history, theme, lang }) {
                   <div style={{ marginTop:8,height:5,borderRadius:3,background:'#F0F0EA',overflow:'hidden' }}>
                     <div style={{ height:'100%',width:`${(Math.abs(h.profitPerRai)/maxAbs)*100}%`,background:isP?'#22C55E':'#EF4444',borderRadius:3 }}/>
                   </div>
+                  {canOpen && <button onClick={()=>onOpenSeason(h.seasonId)} style={{ marginTop:10,border:'1.5px solid #BBF7D0',borderRadius:9,background:'#F0FDF4',color:'#15803D',fontFamily:'Sarabun,sans-serif',fontSize:12,fontWeight:700,padding:'7px 10px',cursor:'pointer' }}>{t('hist_open')}</button>}
                 </div>
                 <div style={{ textAlign:'right',flexShrink:0 }}>
                   <div style={{ fontSize:17,fontWeight:800,color:isP?'#16A34A':'#DC2626' }}>{isP?'+':''}{fmt(h.profitPerRai)}</div>
@@ -1084,6 +1145,9 @@ export default function App() {
   const [costEntries, setCostEntries] = useState(initialState.costEntries);
   const [revenue, setRevenue]         = useState(initialState.revenue);
   const [history, setHistory]         = useState(initialState.history);
+  const [archivedSeasons, setArchivedSeasons] = useState(initialState.archivedSeasons);
+  const [activeSeasonId, setActiveSeasonId] = useState(initialState.activeSeasonId);
+  const [lastBackupAt, setLastBackupAt] = useState(initialState.lastBackupAt);
   const [tweaks, setTweaks]           = useState(initialState.tweaks);
   const [showTweaks, setShowTweaks]   = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -1096,8 +1160,8 @@ export default function App() {
   const totals = useMemo(()=>calcTotals(farm,costEntries,revenue),[farm,costEntries,revenue]);
 
   useEffect(()=>{
-    savePersistedState({ farm, costEntries, revenue, history, tweaks });
-  },[farm,costEntries,revenue,history,tweaks]);
+    savePersistedState({ farm, costEntries, revenue, history, archivedSeasons, activeSeasonId, lastBackupAt, tweaks });
+  },[farm,costEntries,revenue,history,archivedSeasons,activeSeasonId,lastBackupAt,tweaks]);
 
   useEffect(()=>{
     const handler = e=>{
@@ -1148,6 +1212,9 @@ export default function App() {
       costEntries,
       revenue,
       history,
+      archivedSeasons,
+      activeSeasonId,
+      lastBackupAt:new Date().toISOString(),
       tweaks,
     };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type:'application/json;charset=utf-8' });
@@ -1159,6 +1226,7 @@ export default function App() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    setLastBackupAt(backup.lastBackupAt);
   };
   const importBackup = file => {
     const reader = new FileReader();
@@ -1169,6 +1237,9 @@ export default function App() {
         setCostEntries(Array.isArray(parsed.costEntries) ? parsed.costEntries : INIT_ENTRIES);
         setRevenue(normalizeRevenue(parsed.revenue));
         setHistory(Array.isArray(parsed.history) ? parsed.history : INIT_HISTORY);
+        setArchivedSeasons(Array.isArray(parsed.archivedSeasons) ? parsed.archivedSeasons : []);
+        setActiveSeasonId(parsed.activeSeasonId || 'current-season');
+        setLastBackupAt(parsed.lastBackupAt || null);
         setTweaks(parsed.tweaks || TWEAK_DEFAULTS);
         setScreen('dashboard');
       } catch (err) {
@@ -1177,36 +1248,49 @@ export default function App() {
     };
     reader.readAsText(file);
   };
+  const saveCurrentSeason = () => {
+    const record = historyRecord(activeSeasonId, farm, totals, lang);
+    setHistory(previous => [record, ...previous.filter(item=>item.seasonId!==activeSeasonId)]);
+  };
   const startNewSeason = () => {
     const ok = window.confirm(lang==='en'
       ? 'Start a new season? Current summary will be saved to history, then cost and revenue entries will be cleared.'
       : 'เริ่มฤดูกาลใหม่หรือไม่? ระบบจะบันทึกสรุปรอบนี้ไว้ในประวัติ แล้วล้างรายการต้นทุนและรายได้');
     if (!ok) return;
-    const seasonName = farm.seasonLabel || farm.name || (lang==='en' ? 'Current Season' : 'ฤดูกาลปัจจุบัน');
-    setHistory(p=>[{
-      id:Date.now(),
-      name:seasonName,
-      area:farm.area || 1,
-      profit:totals.profit,
-      profitPerRai:totals.profitPerRai,
-      totalCost:totals.totalCost,
-      totalRevenue:totals.totalRevenue,
-      date:new Date().toLocaleDateString(lang==='en'?'en-GB':'th-TH'),
-    },...p]);
+    const snapshot = seasonSnapshot(activeSeasonId, farm, costEntries, revenue);
+    setArchivedSeasons(previous=>[snapshot,...previous.filter(item=>item.id!==activeSeasonId)]);
+    saveCurrentSeason();
+    setActiveSeasonId(`season-${Date.now()}`);
     setCostEntries([]);
     setRevenue(p=>({...normalizeRevenue(p), entries:[]}));
     setFarm(p=>({...p, seasonLabel: lang==='en' ? `Season ${new Date().getFullYear()}` : `ฤดูกาลใหม่ ${new Date().getFullYear()+543}`}));
     setScreen('farm');
   };
+  const openSeason = seasonId => {
+    const selected = archivedSeasons.find(item=>item.id===seasonId);
+    if (!selected) return;
+    const ok = window.confirm(lang==='en'
+      ? `Open "${selected.farm.seasonLabel || selected.farm.name}"? Your current season will be kept and can be opened again.`
+      : `เปิด "${selected.farm.seasonLabel || selected.farm.name}" หรือไม่? ฤดูที่กำลังใช้อยู่จะถูกเก็บไว้และเปิดกลับมาได้`);
+    if (!ok) return;
+    const current = seasonSnapshot(activeSeasonId, farm, costEntries, revenue);
+    saveCurrentSeason();
+    setArchivedSeasons(previous=>[current,...previous.filter(item=>item.id!==seasonId && item.id!==activeSeasonId)]);
+    setActiveSeasonId(selected.id);
+    setFarm({ ...INIT_FARM, ...selected.farm });
+    setCostEntries(Array.isArray(selected.costEntries) ? selected.costEntries : []);
+    setRevenue(normalizeRevenue(selected.revenue));
+    setScreen('dashboard');
+  };
 
   const shared = { theme, lang };
   const SCREENS = {
-    dashboard: <DashboardScreen  farm={farm} totals={totals} setScreen={setScreen} {...shared}/>,
+    dashboard: <DashboardScreen  farm={farm} totals={totals} setScreen={setScreen} lastBackupAt={lastBackupAt} onExportBackup={exportBackup} {...shared}/>,
     farm:      <FarmInfoScreen   farm={farm} setFarm={setFarm} setScreen={setScreen} {...shared}/>,
     costs:     <CostInputScreen  costEntries={costEntries} setCostEntries={setCostEntries} farm={farm} setScreen={setScreen} {...shared}/>,
     revenue:   <RevenueScreen    revenue={revenue} setRevenue={setRevenue} farm={farm} setScreen={setScreen} {...shared}/>,
-    summary:   <SummaryScreen    farm={farm} costEntries={costEntries} revenueEntries={revenue.entries || []} totals={totals} setHistory={setHistory} setScreen={setScreen} onStartNewSeason={startNewSeason} onExportBackup={exportBackup} onImportBackup={importBackup} {...shared}/>,
-    history:   <HistoryScreen    history={history} {...shared}/>,
+    summary:   <SummaryScreen    farm={farm} costEntries={costEntries} revenueEntries={revenue.entries || []} totals={totals} onSaveSeason={saveCurrentSeason} setScreen={setScreen} onStartNewSeason={startNewSeason} onExportBackup={exportBackup} onImportBackup={importBackup} lastBackupAt={lastBackupAt} {...shared}/>,
+    history:   <HistoryScreen    history={history} archivedSeasons={archivedSeasons} activeSeasonId={activeSeasonId} onOpenSeason={openSeason} {...shared}/>,
     reports:   <ReportsScreen    costEntries={costEntries} revenueEntries={revenue.entries || []} totals={totals} {...shared}/>,
   };
 
